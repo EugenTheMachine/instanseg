@@ -204,9 +204,9 @@ class Segmentation_Dataset(Dataset):
         self.X = sorted(os.listdir(self.input_data_dir / "images"))
         self.Y = sorted(os.listdir(self.input_data_dir / "masks"))
         print("Creating dataset. Matching some samples of data:")
-        print(self.X[0], self.Y[0])
-        print(self.X[10], self.Y[10])
-        print(self.X[100], self.Y[100])
+        print(f"{self.X[0]}   |   {self.Y[0]}")
+        print(f"{self.X[10]}   |   {self.Y[10]}")
+        print(f"{self.X[100]}   |   {self.Y[100]}")
         self.common_transforms = common_transforms
 
         assert len(self.X) == len(self.Y), "The number of images and labels must be the same"
@@ -231,8 +231,6 @@ class Segmentation_Dataset(Dataset):
         return len(self.X)
 
     def __getitem__(self, i):
-        print(f"Loading image {self.X[i]}")
-        print(f"Loading masks {self.Y[i]}")
         data = io.imread(self.input_data_dir / "images" / self.X[i])
         label = io.imread(self.input_data_dir / "masks" / self.Y[i])
         if isinstance(self.metadata, list):

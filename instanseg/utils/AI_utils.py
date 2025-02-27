@@ -226,6 +226,8 @@ class Segmentation_Dataset():
         return len(self.X)
 
     def __getitem__(self, i):
+        print(f"Loading image {self.X[i]}")
+        print(f"Loading masks {self.Y[i]}")
         data = io.imread(self.input_data_dir / "images" / self.X[i])
         label = io.imread(self.input_data_dir / "masks" / self.Y[i])
         if isinstance(self.metadata, list):

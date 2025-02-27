@@ -298,7 +298,7 @@ def get_loaders(data_dir: Union[str, Path], args):
                                       cells_and_nuclei=args.cells_and_nuclei,
                                       target_segmentation=args.target_segmentation,
                                       channel_invariant = args.channel_invariant)
-    test_data = Segmentation_Dataset(data_dir / "train", size=(args.tile_size, args.tile_size),
+    test_data = Segmentation_Dataset(data_dir / "test", size=(args.tile_size, args.tile_size),
                                      dim_in=args.dim_in,
                                      augmentation_dict=augmentation_dict['test'],
                                      cells_and_nuclei=args.cells_and_nuclei,

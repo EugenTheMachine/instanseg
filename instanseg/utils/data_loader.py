@@ -1,4 +1,6 @@
-
+import os
+from pathlib import Path
+from typing import Union
 import numpy as np
 import warnings
 
@@ -17,16 +19,15 @@ def _keep_images(item, args):
     
  
 def _format_labels(item,target_segmentation):
-            
     if "cell_masks" in item.keys():
         item["cell_masks"] = get_image(item["cell_masks"])
-    
+
     if "nucleus_masks" in item.keys():
         item["nucleus_masks"] = get_image(item["nucleus_masks"])
- 
+
     elif "masks" in item.keys():
         item["nucleus_masks"] = get_image(item["masks"])
-    
+
     if target_segmentation == "N":
         if "nucleus_masks" not in item.keys():
             c,h,w = item['image'].shape
@@ -52,10 +53,7 @@ def _format_labels(item,target_segmentation):
                 raise NotImplementedError("No labels found")
     else:
         raise NotImplementedError("Target segmentation not recognized", target_segmentation)
-    
- 
     return labels
- 
 
 
 def export_dataset_dict_as_folder(dataset,destination = "benchmarking_data"):
@@ -213,44 +211,107 @@ def _read_images_from_pth(data_path= "../datasets", dataset = "segmentation", da
     return return_list
 
 
+# def get_loaders(train_images_local, train_labels_local, val_images_local, val_labels_local, train_meta, val_meta, args):
+#     from torch.utils.data.sampler import RandomSampler, WeightedRandomSampler
+#     from instanseg.utils.augmentation_config import get_augmentation_dict
+#     from instanseg.utils.AI_utils import Segmentation_Dataset, collate_fn
+#     from torch.utils.data import DataLoader
+#     from instanseg.utils.utils import count_instances
 
-def get_loaders(train_images_local, train_labels_local, val_images_local, val_labels_local, train_meta, val_meta, args):
+#     augmentation_dict = get_augmentation_dict(args.dim_in, nuclei_channel=None, amount=args.transform_intensity,
+#                                               pixel_size=args.requested_pixel_size, augmentation_type=args.augmentation_type)
+
+#     train_data = Segmentation_Dataset(train_images_local, train_labels_local, metadata=train_meta,
+#                                       size=(args.tile_size, args.tile_size), augmentation_dict=augmentation_dict['train'],
+#                                       debug=False,
+#                                       dim_in=args.dim_in, cells_and_nuclei=args.cells_and_nuclei,
+#                                       target_segmentation=args.target_segmentation, channel_invariant = args.channel_invariant)
+
+#     test_data = Segmentation_Dataset(val_images_local, val_labels_local, size=(args.tile_size, args.tile_size), metadata=val_meta,
+#                                      dim_in=args.dim_in,
+#                                      augmentation_dict=augmentation_dict['test'],
+#                                      cells_and_nuclei=args.cells_and_nuclei,
+#                                      target_segmentation=args.target_segmentation,channel_invariant = args.channel_invariant)
+
+#     test_sampler = RandomSampler(test_data,num_samples=int(
+#                 args.length_of_epoch * 0.2))
+
+
+#     if not args.weight:
+#         if args.length_of_epoch is not None:
+#             train_sampler = RandomSampler(train_data, num_samples=args.length_of_epoch)
+#             test_sampler = RandomSampler(test_data, num_samples=int(
+#                 args.length_of_epoch * 0.2))  # This is relates to the standard 80/20 split
+#         else:
+#             train_sampler = RandomSampler(train_data)
+
+
+#     else:
+
+#         datasets_train = [meta["parent_dataset"] for meta in train_meta]
+#         datasets,counts = np.unique(datasets_train,return_counts=True)
+#         dict_datasets = dict(zip(datasets,counts / sum(counts)))
+#         freq = [ 1/ dict_datasets[dataset] for dataset in datasets_train]
+#         rel_freq = (freq / sum(freq))
+#         if args.length_of_epoch is not None:
+#             train_sampler = WeightedRandomSampler(rel_freq, args.length_of_epoch)
+#         else:
+#             train_sampler = WeightedRandomSampler(rel_freq, len(freq))
+
+#         print(dict_datasets)
+
+#         datasets_val = [meta["parent_dataset"] for meta in val_meta]
+#         datasets,counts = np.unique(datasets_val,return_counts=True)
+#         dict_datasets = dict(zip(datasets,counts / sum(counts)))
+#         freq = [ 1/ dict_datasets[dataset] for dataset in datasets_val]
+#         rel_freq = (freq / sum(freq))
+
+#         if args.length_of_epoch is not None:
+#             test_sampler = WeightedRandomSampler(rel_freq, int(args.length_of_epoch * 0.2))
+#         else:
+#             test_sampler = WeightedRandomSampler(rel_freq, len(freq))
+
+
+#     train_loader = DataLoader(train_data, collate_fn=collate_fn, batch_size=args.batch_size, num_workers=args.num_workers,
+#                               sampler=train_sampler, persistent_workers=True)
+#     test_loader = DataLoader(test_data, collate_fn=collate_fn, batch_size=args.batch_size, num_workers=args.num_workers,
+#                              sampler=test_sampler, persistent_workers=True)
+
+#     return train_loader, test_loader
+
+
+def get_loaders(data_dir: Union[str, Path], args):
     from torch.utils.data.sampler import RandomSampler, WeightedRandomSampler
     from instanseg.utils.augmentation_config import get_augmentation_dict
     from instanseg.utils.AI_utils import Segmentation_Dataset, collate_fn
     from torch.utils.data import DataLoader
     from instanseg.utils.utils import count_instances
 
+    data_dir = Path(data_dir)
+
     augmentation_dict = get_augmentation_dict(args.dim_in, nuclei_channel=None, amount=args.transform_intensity,
                                               pixel_size=args.requested_pixel_size, augmentation_type=args.augmentation_type)
-
-    train_data = Segmentation_Dataset(train_images_local, train_labels_local, metadata=train_meta,
-                                      size=(args.tile_size, args.tile_size), augmentation_dict=augmentation_dict['train'],
-                                      debug=False,
-                                      dim_in=args.dim_in, cells_and_nuclei=args.cells_and_nuclei,
-                                      target_segmentation=args.target_segmentation, channel_invariant = args.channel_invariant)
-
-    test_data = Segmentation_Dataset(val_images_local, val_labels_local, size=(args.tile_size, args.tile_size), metadata=val_meta,
+    train_data = Segmentation_Dataset(data_dir / "train",
+                                      size=(args.tile_size, args.tile_size),
+                                      augmentation_dict=augmentation_dict['train'],
+                                      debug=False, dim_in=args.dim_in,
+                                      cells_and_nuclei=args.cells_and_nuclei,
+                                      target_segmentation=args.target_segmentation,
+                                      channel_invariant = args.channel_invariant)
+    test_data = Segmentation_Dataset(data_dir / "train", size=(args.tile_size, args.tile_size),
                                      dim_in=args.dim_in,
                                      augmentation_dict=augmentation_dict['test'],
                                      cells_and_nuclei=args.cells_and_nuclei,
-                                     target_segmentation=args.target_segmentation,channel_invariant = args.channel_invariant)
-
-    test_sampler = RandomSampler(test_data,num_samples=int(
-                args.length_of_epoch * 0.2))
-
-
-    if not args.weight:
+                                     target_segmentation=args.target_segmentation,
+                                     channel_invariant = args.channel_invariant)
+    # if not args.weight:
+    if True:
         if args.length_of_epoch is not None:
             train_sampler = RandomSampler(train_data, num_samples=args.length_of_epoch)
-            test_sampler = RandomSampler(test_data, num_samples=int(
-                args.length_of_epoch * 0.2))  # This is relates to the standard 80/20 split
+            test_sampler = RandomSampler(test_data, num_samples=len(test_data))  # This is relates to the standard 80/20 split
         else:
             train_sampler = RandomSampler(train_data)
-
-
     else:
-
         datasets_train = [meta["parent_dataset"] for meta in train_meta]
         datasets,counts = np.unique(datasets_train,return_counts=True)
         dict_datasets = dict(zip(datasets,counts / sum(counts)))
@@ -273,11 +334,10 @@ def get_loaders(train_images_local, train_labels_local, val_images_local, val_la
             test_sampler = WeightedRandomSampler(rel_freq, int(args.length_of_epoch * 0.2))
         else:
             test_sampler = WeightedRandomSampler(rel_freq, len(freq))
-
-
-    train_loader = DataLoader(train_data, collate_fn=collate_fn, batch_size=args.batch_size, num_workers=args.num_workers,
+    train_loader = DataLoader(train_data, collate_fn=collate_fn, batch_size=args.batch_size,
+                              num_workers=args.num_workers,
                               sampler=train_sampler, persistent_workers=True)
-    test_loader = DataLoader(test_data, collate_fn=collate_fn, batch_size=args.batch_size, num_workers=args.num_workers,
+    test_loader = DataLoader(test_data, collate_fn=collate_fn, batch_size=args.batch_size,
+                             num_workers=args.num_workers,
                              sampler=test_sampler, persistent_workers=True)
-
     return train_loader, test_loader

@@ -7,7 +7,7 @@ import argparse
 import pdb
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-i_p", "--image_path", type=str, default=r"../examples")
+parser.add_argument("-i_p", "--image_path", type=str, default=r"/kaggle/working/instanseg/instanseg/examples")
 parser.add_argument("-m_f", "--model_folder", type=str)
 parser.add_argument("-d", "--device", type=str, default=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
 parser.add_argument("-exclude", "--exclude_str", type=str, default= ["mask","prediction", "geojson", "zip"], help="Exclude files with this string in their name")
@@ -41,9 +41,10 @@ if __name__ == "__main__":
     parser = parser.parse_args()
 
     if parser.image_path is None or not os.path.exists(parser.image_path):
-        from instanseg.utils.utils import drag_and_drop_file
-        parser.image_path = drag_and_drop_file()
-        print("Using image path: ", parser.image_path)
+        print("Please provide a valid image path")
+        # from instanseg.utils.utils import drag_and_drop_file
+        # parser.image_path = drag_and_drop_file()
+        # print("Using image path: ", parser.image_path)
 
     if parser.model_folder is None:
         raise ValueError("Please provide a model name")

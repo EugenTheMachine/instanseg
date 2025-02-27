@@ -23,15 +23,15 @@ parser.add_argument("-m_p", "--model_path", type=str, default=r"../models", help
 parser.add_argument("-o_p", "--output_path", type=str, default=r"../models", help = "Path to the folder where the results will be saved")
 parser.add_argument("-e_s", "--experiment_str", type=str, default="my_first_instanSeg", help = "String to identify the experiment")
 parser.add_argument("-d", "--device", type=str, default=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
-parser.add_argument('-num_workers', '--num_workers', default=3, type=int, help = "Number of CPU cores to use for data loading")
+parser.add_argument('-num_workers', '--num_workers', default=4, type=int, help = "Number of CPU cores to use for data loading")
 parser.add_argument('-ci', '--channel_invariant', default=False, type=lambda x: (str(x).lower() == 'true'), help = "Whether to add a channel invariant model to the pipeline")
-parser.add_argument('-target', '--target_segmentation', default="N",type=str, help = " Cells or nuclei or both? Accepts: C,N, NC")  
+parser.add_argument('-target', '--target_segmentation', default="C",type=str, help = " Cells or nuclei or both? Accepts: C,N, NC")  
 parser.add_argument('-pixel_size', '--requested_pixel_size', default=None, type=float, help = "Requested pixel size to rescale the input images")
 
 #advanced usage
-parser.add_argument("-bs", "--batch_size", type=int, default=3)
-parser.add_argument("-e", "--num_epochs", type=int, default=500)
-parser.add_argument('-len_epoch', '--length_of_epoch', default=1000, type=int, help = "Number of samples per epoch")
+parser.add_argument("-bs", "--batch_size", type=int, default=2)
+parser.add_argument("-e", "--num_epochs", type=int, default=50)
+parser.add_argument('-len_epoch', '--length_of_epoch', default=3188, type=int, help = "Number of samples per epoch")
 parser.add_argument("-lr", "--lr", type=float, default=0.001, help = "Learning rate")
 parser.add_argument("-m", "--model_str", type=str, default="InstanSeg_UNet", help = "Model backbone to use")
 parser.add_argument("-s", "--save", type=bool, default=True, help = "Whether to save model outputs every time a new best F1 score is achieved")
@@ -56,7 +56,7 @@ parser.add_argument('-seed_loss_fn', '--seed_loss_fn', default="l1_distance", ty
 parser.add_argument('-anneal', '--cosineannealing', default=False, type=lambda x: (str(x).lower() == 'true'), help = "Whether to use cosine annealing for the learning rate")
 parser.add_argument('-o_h', '--optimize_hyperparameters', default=False, type=lambda x: (str(x).lower() == 'true'), help = "Whether to optimize hyperparameters every 10 epochs")
 parser.add_argument('-hotstart', '--hotstart_training', default=10, type=int, help = "Number of epochs to train the model with binary_xloss before starting the main training loop (default=10)")
-parser.add_argument('-window', '--window_size', default=128, type=int, help = "Size of the window containing each instance")
+parser.add_argument('-window', '--window_size', default=256, type=int, help = "Size of the window containing each instance")
 parser.add_argument('-multihead', '--multihead', default= True, type=lambda x: (str(x).lower() == 'true'), help = "Whether to branch the decoder into multiple heads.")
 parser.add_argument('-dim_coords', '--dim_coords', default=2, type=int, help = "Dimensionality of the coordinate system. Little support for anything but 2")
 parser.add_argument('-norm', '--norm', default="BATCH", type=str, help = "Norm layer to use: None, INSTANCE, INSTANCE_INVARIANT, BATCH")
@@ -67,7 +67,7 @@ parser.add_argument('-f_e', '--feature_engineering', default="0", type=str, help
 parser.add_argument("-f","--f", default = None, type = str, help = "ignore, this is for jypyter notebook compatibility")
 parser.add_argument('-rng_seed', '--rng_seed', default=None, type=int, help = "Optional seed for the random number generator")
 parser.add_argument('-use_deterministic', '--use_deterministic', default=False, type=lambda x: (str(x).lower() == 'true'), help = "Whether to use deterministic algorithms (default=False)")
-parser.add_argument('-tile', '--tile_size', default=256, type=int, help = "Tile sizes for the input images")
+parser.add_argument('-tile', '--tile_size', default=512, type=int, help = "Tile sizes for the input images")
 
 def main(model, loss_fn, train_loader, test_loader, num_epochs=1000, epoch_name='output_epoch'):
     from instanseg.utils.AI_utils import optimize_hyperparameters, train_epoch, test_epoch
@@ -286,17 +286,17 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
     else:
         args.source_dataset = args.source_dataset
 
+    # train_images, train_labels, train_meta, val_images, val_labels, val_meta = _read_images_from_pth(data_path = args.data_path, 
+    #                                                                                                  dataset = args.dataset,
+    #                                                                                                    data_slice = args.data_slice, 
+    #                                                                                                    dummy = args.dummy, 
+    #                                                                                                    args = args, 
+    #                                                                                                    sets= ["Train","Validation"], 
+    #                                                                                                    complete_dataset=segmentation_dataset)
 
-    train_images, train_labels, train_meta, val_images, val_labels, val_meta = _read_images_from_pth(data_path = args.data_path, 
-                                                                                                     dataset = args.dataset,
-                                                                                                       data_slice = args.data_slice, 
-                                                                                                       dummy = args.dummy, 
-                                                                                                       args = args, 
-                                                                                                       sets= ["Train","Validation"], 
-                                                                                                       complete_dataset=segmentation_dataset)
+    # train_loader, test_loader = get_loaders(train_images, train_labels, val_images, val_labels, train_meta, val_meta, args)
+    train_loader, test_loader = get_loaders(args.data_path, args)
 
-    train_loader, test_loader = get_loaders(train_images, train_labels, val_images, val_labels, train_meta, val_meta, args)
-    
     if torch.cuda.device_count() > 1:
         print("Using", torch.cuda.device_count(), "GPUs!")
         model = nn.DataParallel(model)
@@ -312,7 +312,6 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
 
     pd.DataFrame.from_dict(args_dict, orient='index').to_csv(args.output_path / "experiment_log.csv",
                                                             header=False)
-    
     iou_threshold = np.linspace(0.5, 1.0, 10)
 
     if args.hotstart_training > 0:
@@ -320,14 +319,14 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
         print("Hotstart for "+str(hot_epochs)+" epochs with binary_xloss and dice_loss")
         method.update_seed_loss("binary_xloss")
         method.update_binary_loss("dice_loss")
-        model, train_losses, test_losses, f1_list, f1_list_cells = main(model, loss_fn, train_loader, test_loader, num_epochs=hot_epochs, epoch_name='hotstart_epoch')
+        model, train_losses, test_losses, f1_list, f1_list_cells = main(model, loss_fn, train_loader,
+                                                                        test_loader, num_epochs=hot_epochs,
+                                                                        epoch_name='hotstart_epoch')
 
         print("Starting main training loop with",args.seed_loss_fn, "and", args.binary_loss_fn)
         method.update_seed_loss(args.seed_loss_fn)
         method.update_binary_loss(args.binary_loss_fn)
-
     model, train_losses, test_losses, f1_list, f1_list_cells = main(model, loss_fn, train_loader, test_loader, num_epochs=num_epochs)
-
     from instanseg.utils.model_loader import load_model
     model, model_dict = load_model(folder="", path=args.output_path) #Load model from checkpoint
     model.eval()

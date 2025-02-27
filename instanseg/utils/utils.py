@@ -809,34 +809,34 @@ def export_to_torchscript(model_str: str, show_example: bool = False, output_dir
 
 
 
-def drag_and_drop_file():
-    """
-    This opens a window where a user can drop a file and returns the path to the file
-    """
+# def drag_and_drop_file():
+#     """
+#     This opens a window where a user can drop a file and returns the path to the file
+#     """
 
-    import tkinter as tk
-    from tkinterdnd2 import TkinterDnD, DND_FILES
+#     import tkinter as tk
+#     from tkinterdnd2 import TkinterDnD, DND_FILES
 
-    def drop(event):
-        file_path = event.data
-        entry_var.set(file_path)
+#     def drop(event):
+#         file_path = event.data
+#         entry_var.set(file_path)
 
-    def save_and_close():
-        entry_var.get()
-        root.destroy()  # Close the window
+#     def save_and_close():
+#         entry_var.get()
+#         root.destroy()  # Close the window
 
-    root = TkinterDnD.Tk()
-    entry_var = tk.StringVar()
-    entry = tk.Entry(root, textvariable=entry_var, width=40)
-    entry.pack(pady=20)
+#     root = TkinterDnD.Tk()
+#     entry_var = tk.StringVar()
+#     entry = tk.Entry(root, textvariable=entry_var, width=40)
+#     entry.pack(pady=20)
 
-    entry.drop_target_register(DND_FILES)
-    entry.dnd_bind('<<Drop>>', drop)
+#     entry.drop_target_register(DND_FILES)
+#     entry.dnd_bind('<<Drop>>', drop)
 
-    save_button = tk.Button(root, text="Save and Close", command=save_and_close)
-    save_button.pack(pady=10)
-    root.mainloop()
-    return entry_var.get()
+#     save_button = tk.Button(root, text="Save and Close", command=save_and_close)
+#     save_button.pack(pady=10)
+#     root.mainloop()
+#     return entry_var.get()
 
 
 def download_model(model_str: str, version: Optional[str] = None, verbose : bool = True, force: bool = False):

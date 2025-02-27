@@ -1,7 +1,9 @@
-import torch
+import os
+from pathlib import Path
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from skimage import io
 from tqdm.auto import tqdm
 from instanseg.utils.metrics import _robust_average_precision, _robust_f1_mean_calculator
 
@@ -147,38 +149,94 @@ def collate_fn(data):
     return images, labels, lengths.int()
 
 
-# import fastremap
+# # import fastremap
+# class Segmentation_Dataset():
+#     def __init__(self, img, label, common_transforms=True, metadata=None, size=(256, 256), augmentation_dict=None,
+#                  dim_in=3, debug=False, cells_and_nuclei=False, target_segmentation="N", channel_invariant = False):
+#         self.X = img
+#         self.Y = label
+#         self.common_transforms = common_transforms
+
+#         assert len(self.X) == len(self.Y), "The number of images and labels must be the same"
+#         if len(metadata) == 0:
+#             self.metadata = [None] * len(self.X)
+#         else:
+#             self.metadata = metadata
+
+#         assert len(self.X) == len(self.metadata), print("The number of images and metadata must be the same")
+#         self.size = size
+#         self.Augmenter = Augmentations(augmentation_dict=augmentation_dict, debug=debug, shape=self.size,
+#                                        dim_in=dim_in, cells_and_nuclei=cells_and_nuclei,
+#                                        target_segmentation=target_segmentation, channel_invariant = channel_invariant)
+
+#     def __len__(self):
+#         return len(self.X)
+
+#     def __getitem__(self, i):
+
+#         data = self.X[i]
+#         label = self.Y[i]
+#         meta = self.metadata[i]
+
+#         if self.common_transforms:
+#             data, label = self.Augmenter(data, label, meta)
+
+#         if len(label.shape) == 2:
+#             label = label[None, :]
+#         if len(data.shape) == 2:
+#             data = data[None, :]
+
+#         assert not data.isnan().any(), "Tranformed images contains NaN"
+#         assert not label.isnan().any(), "Transformed labels contains NaN"
+
+#         return data.float(), label
+
+
 class Segmentation_Dataset():
-    def __init__(self, img, label, common_transforms=True, metadata=None, size=(256, 256), augmentation_dict=None,
-                 dim_in=3, debug=False, cells_and_nuclei=False, target_segmentation="N", channel_invariant = False):
-        self.X = img
-        self.Y = label
+    def __init__(self, input_data_dir, common_transforms=True, metadata=None, size=(512, 512),
+                 augmentation_dict=None, dim_in=3, debug=False, cells_and_nuclei=False,
+                 target_segmentation="C", channel_invariant = True):
+        # we are given input data dir for a SUBSET of data, so no sub-sub-sets in here
+        # self.X = img
+        # self.Y = label
+        self.input_data_dir = Path(input_data_dir)
+        self.X = os.listdir(self.input_data_dir / "images")
+        self.Y = os.listdir(self.input_data_dir / "masks")
         self.common_transforms = common_transforms
 
         assert len(self.X) == len(self.Y), "The number of images and labels must be the same"
-        if len(metadata) == 0:
-            self.metadata = [None] * len(self.X)
+        if metadata is None or len(metadata) == 0:
+            self.metadata = {
+                "parent_dataset": "LIVECell",
+                "licence": "CC BY 4.0",
+                "pixel_size": 0.25,
+                "image_modality": "Brightfield",
+                "stain": "H&E"
+            }
         else:
             self.metadata = metadata
-
-        assert len(self.X) == len(self.metadata), print("The number of images and metadata must be the same")
+        # assert len(self.X) == len(self.metadata), print("The number of images and metadata must be the same")
         self.size = size
-        self.Augmenter = Augmentations(augmentation_dict=augmentation_dict, debug=debug, shape=self.size,
-                                       dim_in=dim_in, cells_and_nuclei=cells_and_nuclei,
-                                       target_segmentation=target_segmentation, channel_invariant = channel_invariant)
-
+        self.Augmenter = Augmentations(augmentation_dict=augmentation_dict, debug=debug,
+                                       shape=self.size, dim_in=dim_in,
+                                       cells_and_nuclei=cells_and_nuclei,
+                                       target_segmentation=target_segmentation,
+                                       channel_invariant = channel_invariant)
     def __len__(self):
         return len(self.X)
 
     def __getitem__(self, i):
-
-        data = self.X[i]
-        label = self.Y[i]
-        meta = self.metadata[i]
+        data = io.imread(self.input_data_dir / "images" / self.X[i])
+        label = io.imread(self.input_data_dir / "masks" / self.Y[i])
+        if isinstance(self.metadata, list):
+            meta = self.metadata[i]
+        elif isinstance(self.metadata, dict):
+            meta = self.metadata
+        else:
+            raise ValueError("Metadata must be a list or a dictionary.")
 
         if self.common_transforms:
             data, label = self.Augmenter(data, label, meta)
-
         if len(label.shape) == 2:
             label = label[None, :]
         if len(data.shape) == 2:
@@ -188,7 +246,6 @@ class Segmentation_Dataset():
         assert not label.isnan().any(), "Transformed labels contains NaN"
 
         return data.float(), label
-
 
 
 def plot_loss(_model):
@@ -208,7 +265,6 @@ def plot_loss(_model):
     plt.show()
 
 
-
 def check_max_grad(_model):
     losses = np.array([param.grad.norm().item() for name, param in _model.named_parameters() if param.grad is not None])
     return losses.max()
@@ -222,7 +278,6 @@ def check_min_grad(_model):
 def check_mean_grad(_model):
     losses = np.array([param.grad.norm().item() for name, param in _model.named_parameters() if param.grad is not None])
     return losses.mean()
-
 
 
 def optimize_hyperparameters(model,postprocessing_fn, data_loader = None, val_images = None, val_labels = None,max_evals = 50, verbose = False, threshold = [0.5, 0.7, 0.9], show_progressbar = True, device = None):

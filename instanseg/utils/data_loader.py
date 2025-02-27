@@ -305,39 +305,45 @@ def get_loaders(data_dir: Union[str, Path], args):
                                      target_segmentation=args.target_segmentation,
                                      channel_invariant = args.channel_invariant)
     # if not args.weight:
-    if True:
-        if args.length_of_epoch is not None:
-            train_sampler = RandomSampler(train_data, num_samples=args.length_of_epoch)
-            test_sampler = RandomSampler(test_data, num_samples=len(test_data))  # This is relates to the standard 80/20 split
-        else:
-            train_sampler = RandomSampler(train_data)
-    else:
-        datasets_train = [meta["parent_dataset"] for meta in train_meta]
-        datasets,counts = np.unique(datasets_train,return_counts=True)
-        dict_datasets = dict(zip(datasets,counts / sum(counts)))
-        freq = [ 1/ dict_datasets[dataset] for dataset in datasets_train]
-        rel_freq = (freq / sum(freq))
-        if args.length_of_epoch is not None:
-            train_sampler = WeightedRandomSampler(rel_freq, args.length_of_epoch)
-        else:
-            train_sampler = WeightedRandomSampler(rel_freq, len(freq))
+    # if True:
+    #     if args.length_of_epoch is not None:
+    #         train_sampler = RandomSampler(train_data, num_samples=args.length_of_epoch)
+    #         test_sampler = RandomSampler(test_data, num_samples=len(test_data))  # This is relates to the standard 80/20 split
+    #     else:
+    #         train_sampler = RandomSampler(train_data)
+    # else:
+    #     datasets_train = [meta["parent_dataset"] for meta in train_meta]
+    #     datasets,counts = np.unique(datasets_train,return_counts=True)
+    #     dict_datasets = dict(zip(datasets,counts / sum(counts)))
+    #     freq = [ 1/ dict_datasets[dataset] for dataset in datasets_train]
+    #     rel_freq = (freq / sum(freq))
+    #     if args.length_of_epoch is not None:
+    #         train_sampler = WeightedRandomSampler(rel_freq, args.length_of_epoch)
+    #     else:
+    #         train_sampler = WeightedRandomSampler(rel_freq, len(freq))
 
-        print(dict_datasets)
+    #     print(dict_datasets)
 
-        datasets_val = [meta["parent_dataset"] for meta in val_meta]
-        datasets,counts = np.unique(datasets_val,return_counts=True)
-        dict_datasets = dict(zip(datasets,counts / sum(counts)))
-        freq = [ 1/ dict_datasets[dataset] for dataset in datasets_val]
-        rel_freq = (freq / sum(freq))
+    #     datasets_val = [meta["parent_dataset"] for meta in val_meta]
+    #     datasets,counts = np.unique(datasets_val,return_counts=True)
+    #     dict_datasets = dict(zip(datasets,counts / sum(counts)))
+    #     freq = [ 1/ dict_datasets[dataset] for dataset in datasets_val]
+    #     rel_freq = (freq / sum(freq))
 
-        if args.length_of_epoch is not None:
-            test_sampler = WeightedRandomSampler(rel_freq, int(args.length_of_epoch * 0.2))
-        else:
-            test_sampler = WeightedRandomSampler(rel_freq, len(freq))
+    #     if args.length_of_epoch is not None:
+    #         test_sampler = WeightedRandomSampler(rel_freq, int(args.length_of_epoch * 0.2))
+    #     else:
+    #         test_sampler = WeightedRandomSampler(rel_freq, len(freq))
+    # train_loader = DataLoader(train_data, collate_fn=collate_fn, batch_size=args.batch_size,
+    #                           num_workers=args.num_workers,
+    #                           sampler=train_sampler, persistent_workers=True)
+    # test_loader = DataLoader(test_data, collate_fn=collate_fn, batch_size=args.batch_size,
+    #                          num_workers=args.num_workers,
+    #                          sampler=test_sampler, persistent_workers=True)
     train_loader = DataLoader(train_data, collate_fn=collate_fn, batch_size=args.batch_size,
                               num_workers=args.num_workers,
-                              sampler=train_sampler, persistent_workers=True)
+                              shuffle=True, persistent_workers=True)
     test_loader = DataLoader(test_data, collate_fn=collate_fn, batch_size=args.batch_size,
                              num_workers=args.num_workers,
-                             sampler=test_sampler, persistent_workers=True)
+                             shuffle=False, persistent_workers=True)
     return train_loader, test_loader

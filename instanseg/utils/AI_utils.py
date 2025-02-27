@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import torch
+from torch.utils.data import Dataset
 import numpy as np
 import matplotlib.pyplot as plt
 from skimage import io
@@ -192,7 +193,7 @@ def collate_fn(data):
 #         return data.float(), label
 
 
-class Segmentation_Dataset():
+class Segmentation_Dataset(Dataset):
     def __init__(self, input_data_dir, common_transforms=True, metadata=None, size=(512, 512),
                  augmentation_dict=None, dim_in=3, debug=False, cells_and_nuclei=False,
                  target_segmentation="C", channel_invariant = True):
@@ -200,8 +201,12 @@ class Segmentation_Dataset():
         # self.X = img
         # self.Y = label
         self.input_data_dir = Path(input_data_dir)
-        self.X = os.listdir(self.input_data_dir / "images")
-        self.Y = os.listdir(self.input_data_dir / "masks")
+        self.X = sorted(os.listdir(self.input_data_dir / "images"))
+        self.Y = sorted(os.listdir(self.input_data_dir / "masks"))
+        print("Creating dataset. Matching some samples of data:")
+        print(self.X[0], self.Y[0])
+        print(self.X[10], self.Y[10])
+        print(self.X[100], self.Y[100])
         self.common_transforms = common_transforms
 
         assert len(self.X) == len(self.Y), "The number of images and labels must be the same"

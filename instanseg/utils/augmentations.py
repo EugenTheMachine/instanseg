@@ -99,8 +99,6 @@ class Augmentations(object):
         self.nuclei_channel = nuclei_channel  # The channel that contains the nuclei. (Can be 'None' for brightfield images or if in image metadata)
         self.channel_invariant = channel_invariant
     def to_tensor(self, image, labels=None, normalize=False, amount=None, metadata=None):
-
-
         if isinstance(image, np.ndarray):
             if self.debug:
                 orig = image.copy()

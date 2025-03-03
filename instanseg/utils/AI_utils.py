@@ -223,8 +223,8 @@ class Segmentation_Dataset(Dataset):
     def __getitem__(self, i):
         # data = io.imread(self.input_data_dir / "images" / self.X[i])
         # label = io.imread(self.input_data_dir / "masks" / self.Y[i])
-        data = self.X[i]
-        label = self.Y[i]
+        data = torch.tensor(self.X[i])
+        label = torch.tensor(self.Y[i])
         if isinstance(self.metadata, list):
             meta = self.metadata[i]
         elif isinstance(self.metadata, dict):

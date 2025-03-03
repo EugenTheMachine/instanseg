@@ -35,7 +35,6 @@ def train_epoch(train_model,
         image_batch = image_batch.to(train_device)
         labels = labels_batch.to(train_device)
         output = train_model(image_batch)
-        print(labels.dtype, output.dtype)
         loss = train_loss_fn(output, labels.clone()).mean()
         train_optimizer.zero_grad()
         loss.backward()

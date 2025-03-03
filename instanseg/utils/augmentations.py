@@ -97,8 +97,8 @@ class Augmentations(object):
         # self.augmentation_dict = augmentation_dict
         # Define your configuration parameters
         self.config = {
-            "bright_limit": 0.2,
-            "contrast_limit": 0.2,
+            "bright_limit": 0.1,
+            "contrast_limit": 0.1,
             "bright_prob": 0.5,
             "flip_prob": 0.5,
             "crop_scale": (0.3, 1.0),

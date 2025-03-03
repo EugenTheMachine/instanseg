@@ -8,6 +8,7 @@ import cv2
 from torchvision.transforms import RandomCrop, Resize, RandomPerspective
 from monai.transforms import RandGaussianNoise, AdjustContrast
 import albumentations as A
+from albumentations.pytorch import ToTensorV2
 from instanseg.utils.utils import percentile_normalize, generate_colors
 import warnings
 
@@ -843,7 +844,8 @@ class Augmentations(object):
                     border_mode=cv2.BORDER_CONSTANT,
                     interpolation=cv2.INTER_LINEAR,
                 ),
-                A.Resize(height=self.config["size"], width=self.config["size"])
+                # A.Resize(height=512, width=512),
+                ToTensorV2(),
             ],
             additional_targets={'mask': 'mask'}
         )

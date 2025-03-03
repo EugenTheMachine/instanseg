@@ -828,14 +828,14 @@ class Augmentations(object):
                 ),
                 A.HorizontalFlip(p=self.config["flip_prob"]),
                 A.VerticalFlip(p=self.config["flip_prob"]),
-                A.RandomResizedCrop(
-                    height=self.config["size"],
-                    width=self.config["size"],
-                    scale=self.config["crop_scale"],
-                    ratio=self.config["crop_ratio"],
-                    p=self.config["crop_prob"],
-                    interpolation=cv2.INTER_LINEAR_EXACT,
-                ),
+                # A.RandomResizedCrop(
+                #     height=self.config["size"],
+                #     width=self.config["size"],
+                #     scale=self.config["crop_scale"],
+                #     ratio=self.config["crop_ratio"],
+                #     p=self.config["crop_prob"],
+                #     interpolation=cv2.INTER_LINEAR_EXACT,
+                # ),
                 A.ShiftScaleRotate(
                     scale_limit=self.config["scale_limit"],
                     rotate_limit=45,

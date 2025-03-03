@@ -257,13 +257,13 @@ class Segmentation_Dataset(Dataset):
             label = label[None, :]
             if isinstance(label, np.ndarray):
                 if label.dtype == np.uint16:
-                    label = label.astype(np.int16)
+                    label = label.astype(np.int32)
                 label = torch.from_numpy(label)#.float()
         if len(data.shape) == 2:
             data = data[None, :]
             if isinstance(data, np.ndarray):
                 if data.dtype == np.uint16:
-                    data = data.astype(np.int16)
+                    data = data.astype(np.int32)
                 data = torch.from_numpy(data)#.float()
 
         assert not data.isnan().any(), "Tranformed images contains NaN"

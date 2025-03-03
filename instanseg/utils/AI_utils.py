@@ -260,7 +260,7 @@ class Segmentation_Dataset(Dataset):
         assert not data.isnan().any(), "Tranformed images contains NaN"
         assert not label.isnan().any(), "Transformed labels contains NaN"
 
-        return data.float(), label.float()
+        return data.float(), label#.float()
 
 
 def plot_loss(_model):

@@ -743,9 +743,6 @@ class Augmentations(object):
             print("Rescaling")
             show_images([image[0], labels, out_image[0], out_labels],
                         titles=["Source", "Target", "Resize source", "Resized target"], n_cols=2, axes=True)
-            
-        
-
         if labels is None:
             return out_image.float(), None
         else:
@@ -816,8 +813,6 @@ class Augmentations(object):
 
         has_been_normalized = False
 
-        
-
         # Create Albumentations transform pipeline
         transform = A.Compose(
             [
@@ -845,7 +840,7 @@ class Augmentations(object):
                     interpolation=cv2.INTER_LINEAR,
                 ),
                 # A.Resize(height=512, width=512),
-                ToTensorV2(),
+                ToTensorV2()
             ],
             additional_targets={'mask': 'mask'}
         )

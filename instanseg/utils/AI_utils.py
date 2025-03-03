@@ -250,13 +250,12 @@ class Segmentation_Dataset(Dataset):
             meta = self.metadata
         else:
             raise ValueError("Metadata must be a list or a dictionary.")
-
         if self.common_transforms and "train" in str(self.input_data_dir):
             data, label = self.Augmenter(data, label, meta)
         if len(label.shape) == 2:
-            label = label[None, :]
+            label = torch.tensor(label[None, :])
         if len(data.shape) == 2:
-            data = data[None, :]
+            data = torch.tensor(data[None, :])
 
         assert not data.isnan().any(), "Tranformed images contains NaN"
         assert not label.isnan().any(), "Transformed labels contains NaN"

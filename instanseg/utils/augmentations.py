@@ -338,7 +338,9 @@ class Augmentations(object):
 
     def adjust_hue(self, image, labels, amount=0, metadata=None):
 
-        assert image.shape[0] == 3
+        # assert image.shape[0] == 3
+        if image.shape[0] != 3:
+            return
 
         if metadata is not None and metadata["image_modality"] != "Brightfield":
             return image, labels

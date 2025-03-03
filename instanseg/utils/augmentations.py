@@ -851,9 +851,9 @@ class Augmentations(object):
                                                           labels,
                                                           metadata=metadata)  # This will only catch single channel images fed to a multi channel network and duplicate the channel if required.
 
-        if image.var() > 1e2:
-            image = torch.clip(image, min=-1, max=5)
-            warnings.warn("Warning, variance of image is very high, check augmentations")
+        # if image.var() > 1e2:
+        #     image = torch.clip(image, min=-1, max=5)
+        #     warnings.warn("Warning, variance of image is very high, check augmentations")
 
         return image, labels
 

@@ -251,7 +251,7 @@ class Segmentation_Dataset(Dataset):
         else:
             raise ValueError("Metadata must be a list or a dictionary.")
 
-        if self.common_transforms:
+        if self.common_transforms and "train" in str(self.input_data_dir):
             data, label = self.Augmenter(data, label, meta)
         if len(label.shape) == 2:
             label = label[None, :]

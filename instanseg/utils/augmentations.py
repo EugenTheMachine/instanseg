@@ -4,8 +4,10 @@ import torchvision.transforms.functional as TF
 import torch
 import random
 import numpy as np
+import cv2
 from torchvision.transforms import RandomCrop, Resize, RandomPerspective
 from monai.transforms import RandGaussianNoise, AdjustContrast
+import albumentations as A
 from instanseg.utils.utils import percentile_normalize, generate_colors
 import warnings
 
@@ -87,11 +89,23 @@ def get_marker_location(meta):
     return meta
     
 class Augmentations(object):
-    def __init__(self, augmentation_dict={}, shape=(256, 256), dim_in=3,
+    def __init__(self, augmentation_dict: dict = None, shape=(256, 256), dim_in=3,
                  nuclei_channel=None, debug=False, modality=None, cells_and_nuclei=False, target_segmentation="N",channel_invariant = False):
         self.debug = debug
         self.shape = shape
-        self.augmentation_dict = augmentation_dict
+        # self.augmentation_dict = augmentation_dict
+        # Define your configuration parameters
+        self.config = {
+            "bright_limit": 0.2,
+            "contrast_limit": 0.2,
+            "bright_prob": 0.7,
+            "flip_prob": 0.5,
+            "crop_scale": (0.8, 1.0),
+            "crop_ratio": (0.9, 1.1),
+            "crop_prob": 0.8,
+            "scale_limit": 0.15,
+            "rotate_prob": 0.7
+        }
         self.modality = modality
         self.cells_and_nuclei = cells_and_nuclei
         self.target_segmentation = target_segmentation
@@ -770,11 +784,8 @@ class Augmentations(object):
         if self.debug:
             print("Observed modality:", modality)
 
-
-        augmentation_dict = self.augmentation_dict[modality]
-
-        if self.debug:
-            print(augmentation_dict.keys())
+        # if self.debug:
+        #     print(self.augmentation_dict.keys())
 
         if meta is not None:
             if "nuclei_channels" in meta.keys():
@@ -803,57 +814,40 @@ class Augmentations(object):
 
         has_been_normalized = False
 
-        for augmentation, values in augmentation_dict.items():
-
-            if np.random.random() < values[0]:
-
-                if augmentation in ["normalize_HE_stains", "extract_hematoxylin_stain", "normalize", "pseudo_background"]:
-                    if not has_been_normalized:
-                        if augmentation != "normalize":
-                            _, amount = values
-                        image, labels = getattr(self, augmentation)(image, labels, amount=amount, metadata=metadata)
-                        has_been_normalized = True
-
-                    else:
-                        pass
-
-                elif augmentation == "pseudo_brightfield":
-                    image, labels = self.pseudo_brightfield(image, labels, c_nuclei=c_nuclei, metadata=metadata)
-                    metadata["image_modality"] = "Brightfield"
-
-                elif augmentation == "channel_subsample":
-                    _, (min_channels, max_channels) = values
-                    image, labels, c_nuclei = self.channel_subsample(image, labels, max_channels=max_channels + 1,
-                                                                     c_nuclei=c_nuclei, min_channels=min_channels,
-                                                                     metadata=metadata)
-                elif augmentation == "extract_nucleus_and_cytoplasm_channels":
-                    image, labels, c_nuclei = self.extract_nucleus_and_cytoplasm_channels(image, labels,
-                                                                                          c_nuclei=c_nuclei,
-                                                                                          metadata=metadata)
-
-                elif augmentation == "torch_rescale":
-                    _, requested_pixel_size, amount = values
-                    image, labels = self.torch_rescale(image, labels, current_pixel_size=None,
-                                                       requested_pixel_size=requested_pixel_size, amount=amount,
-                                                       metadata=metadata)
-
-                elif augmentation == "colourize":
-                    _, amount = values
-                    image, labels = self.colourize(image, labels, c_nuclei=c_nuclei, metadata=metadata)
-
-
-                elif augmentation == "add_noisy_channels":
-                    _, max_channels = values
-                    image, labels = self.add_noisy_channels(image, labels, metadata=metadata, max_channels=max_channels, amount = 0.5)
-
-                else:
-                    p, *rest = values
-                    amount = rest[0] if len(rest) == 1 else None
-
-                    image, labels = getattr(self, augmentation)(image, labels, amount=amount, metadata=metadata)
-
-                assert not image.isnan().any()
         
+
+        # Create Albumentations transform pipeline
+        transform = A.Compose(
+            [
+                A.RandomBrightnessContrast(
+                    brightness_limit=self.config["bright_limit"],
+                    contrast_limit=self.config["contrast_limit"],
+                    p=self.config["bright_prob"],
+                ),
+                A.HorizontalFlip(p=self.config["flip_prob"]),
+                A.VerticalFlip(p=self.config["flip_prob"]),
+                A.RandomResizedCrop(
+                    height=self.config["size"],
+                    width=self.config["size"],
+                    scale=self.config["crop_scale"],
+                    ratio=self.config["crop_ratio"],
+                    p=self.config["crop_prob"],
+                    interpolation=cv2.INTER_LINEAR_EXACT,
+                ),
+                A.ShiftScaleRotate(
+                    scale_limit=self.config["scale_limit"],
+                    rotate_limit=45,
+                    shift_limit=0.1,
+                    p=self.config["rotate_prob"],
+                    border_mode=cv2.BORDER_CONSTANT,
+                    interpolation=cv2.INTER_LINEAR,
+                ),
+                A.Resize(height=self.config["size"], width=self.config["size"])
+            ],
+            additional_targets={'mask': 'mask'}
+        )
+        transformed = transform(image=image, mask=labels)
+        image, labels = transformed['image'], transformed['mask']
 
         image, labels = self.duplicate_grayscale_channels(image,
                                                           labels,
@@ -869,7 +863,7 @@ class Augmentations(object):
 if __name__ == "__main__":
     from instanseg.utils.augmentation_config import get_augmentation_dict
 
-    augmentation_dict = get_augmentation_dict(nuclei_channel=6, dim_in=3, amount=0.5,augmentation_type="heavy")['train']
+    # augmentation_dict = get_augmentation_dict(nuclei_channel=6, dim_in=3, amount=0.5,augmentation_type="heavy")['train']
 
     import tifffile
 
@@ -878,6 +872,6 @@ if __name__ == "__main__":
     meta = {"image_modality": "Fluorescence", "nuclei_channels": [7]}
 
 
-    Augmenter = Augmentations(augmentation_dict=augmentation_dict, debug=False,dim_in = None)
+    Augmenter = Augmentations(debug=False, dim_in = None)
 
     show_images([Augmenter(img, label, meta)[0] for i in range(30)])

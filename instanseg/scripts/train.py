@@ -17,7 +17,7 @@ import pdb
 parser = argparse.ArgumentParser()
 # kaggle credentials
 parser.add_argument("-k_u", "--kaggle_username", type=str, default=None, help="Kaggle username")
-parser.add_argument("-k_k", "--kaggle_key", type=str, default=None, help="Kaggle key")
+parser.add_argument("-k_k", "--kaggle_key", type=str, default=None, help="Kaggle key")  #.
 
 #basic usage
 parser.add_argument("-d_p", "--data_path", type=str, default="/kaggle/input/livecell-cellseg1", help="Path to the data folder")

@@ -200,7 +200,7 @@ class Segmentation_Dataset(Dataset):
         print("Creating dataset. Matching some samples of data:")
         print(f"{img_paths[0]}   |   {mask_paths[0]}")
         print(f"{img_paths[-1]}   |   {mask_paths[-1]}")
-        images = [io.imread(self.input_data_dir / "images" / img_path).astype(np.int16) for img_path in img_paths]
+        images = [io.imread(self.input_data_dir / "images" / img_path).astype(np.uint8) for img_path in img_paths]
         masks = [io.imread(self.input_data_dir / "masks" / mask_path).astype(np.int16) for mask_path in mask_paths]
         self.X = [
             cv2.resize(
@@ -306,7 +306,7 @@ class Segmentation_Dataset(Dataset):
         if len(data.shape) == 2:
             data = data[None, :]
         data = torch.tensor(data, dtype=torch.float32)
-        label = torch.tensor(label, dtype=torch.int32)
+        label = torch.tensor(label, dtype=torch.int16)
 
         assert not data.isnan().any(), "Tranformed images contains NaN"
         assert not label.isnan().any(), "Transformed labels contains NaN"

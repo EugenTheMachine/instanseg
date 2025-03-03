@@ -198,7 +198,6 @@ class Segmentation_Dataset(Dataset):
         print(f"{img_paths[0]}   |   {mask_paths[0]}")
         print(f"{img_paths[-1]}   |   {mask_paths[-1]}")
         images = [io.imread(self.input_data_dir / "images" / img_path) for img_path in img_paths]
-        print("Shape", images[0].shape)
         masks = [io.imread(self.input_data_dir / "masks" / mask_path) for mask_path in mask_paths]
         self.X = [
             cv2.resize(
@@ -208,7 +207,6 @@ class Segmentation_Dataset(Dataset):
             )
             for image in images
         ]
-        print("SHAPE", self.X[0].shape)
         self.Y = [
             cv2.resize(
                 mask,

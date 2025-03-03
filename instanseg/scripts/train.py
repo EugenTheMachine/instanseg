@@ -153,7 +153,7 @@ def main(model, loss_fn, train_loader, test_loader, num_epochs: int = 1000,
         if args.kaggle_username is not None and args.kaggle_key is not None:
             model_path = args.output_path / "model_weights_last.pth"
             handle = 'eugenfromkharkov/instanseg-last-ckp/Other/default'
-            kagglehub.model_upload(handle, model_path, version_notes='Latest upload of model weights')
+            kagglehub.model_upload(handle, str(model_path), version_notes='Latest upload of model weights')
         # saving model if it is best for now
         if f1_score > best_f1_score or save_epoch_outputs:
             best_f1_score = np.maximum(f1_score, best_f1_score)
@@ -167,7 +167,7 @@ def main(model, loss_fn, train_loader, test_loader, num_epochs: int = 1000,
             if args.kaggle_username is not None and args.kaggle_key is not None:
                 model_path = args.output_path / "model_weights_best.pth"
                 handle = 'eugenfromkharkov/instanseg-best-ckp/Other/default'
-                kagglehub.model_upload(handle, model_path, version_notes='Best upload of model weights')
+                kagglehub.model_upload(handle, str(model_path), version_notes='Best upload of model weights')
         else:
             no_improve_epochs += 1
             if no_improve_epochs >= patience:

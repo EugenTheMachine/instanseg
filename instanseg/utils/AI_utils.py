@@ -23,29 +23,24 @@ def train_epoch(train_model,
                 train_optimizer, 
                 args,
                 ):
-    
+
     global global_step
     start = time.time()
     train_model.train()
     train_loss = []
     for image_batch, labels_batch, _ in tqdm(train_dataloader, disable=args.on_cluster):
-
         image_batch = image_batch.to(train_device)
         labels = labels_batch.to(train_device)
         output = train_model(image_batch)
         loss = train_loss_fn(output, labels.clone()).mean()
         train_optimizer.zero_grad()
         loss.backward()
-
         torch.nn.utils.clip_grad_norm_(train_model.parameters(), args.clip)
-
         train_optimizer.step()
         train_loss.append(loss.detach().cpu().numpy())
-
     end = time.time()
+    return sum(train_loss) / 3188, end - start
 
-    return np.mean(train_loss), end - start
-    
 
 global_step_test = 0
 def test_epoch(test_model, 
@@ -74,23 +69,16 @@ def test_epoch(test_model,
             output = test_model(image_batch)  
             loss = test_loss_fn(output, labels.clone()).mean()
             test_loss.append(loss.detach().cpu().numpy())
-
-
-
             if labels.type() != 'torch.cuda.FloatTensor' and labels.type() != 'torch.FloatTensor':
                 predicted_labels = torch.stack([postprocessing_fn(out) for out in output])
                 f1i = _robust_average_precision(labels.clone(), predicted_labels.clone(),
                                                threshold=iou_threshold)
-
                 current_f1_list.append((f1i))
             else:
                 warnings.warn("Labels are of type float, not int. Not calculating F1.")
                 current_f1_list.append(0)
-
             global_step_test += 1
-
     f1_array = np.array(current_f1_list)  # either N,2 or N,
-
     if f1_array.ndim == 1:
         f1_array = np.atleast_2d(f1_array).T
 
@@ -120,9 +108,8 @@ def test_epoch(test_model,
                                                                                  "Prediction: Cells"] + ["Out" for _ in
                                                                                                          output[0]],
                         labels=[1, 2, 3, 4], n_cols=5)
-
     end = time.time()
-    return np.mean(test_loss), mean1_f1, end - start
+    return sum(test_loss) / 569, mean1_f1, end - start
 
 
 def collate_fn(data):
@@ -201,15 +188,19 @@ class Segmentation_Dataset(Dataset):
         # self.X = img
         # self.Y = label
         self.input_data_dir = Path(input_data_dir)
-        self.X = sorted(os.listdir(self.input_data_dir / "images"))
-        self.Y = sorted(os.listdir(self.input_data_dir / "masks"))
+        # self.X = sorted(os.listdir(self.input_data_dir / "images"))
+        # self.Y = sorted(os.listdir(self.input_data_dir / "masks"))
+        img_paths = sorted(os.listdir(self.input_data_dir / "images"))
+        mask_paths = sorted(os.listdir(self.input_data_dir / "masks"))
+        assert len(img_paths) == len(mask_paths), "The number of images and labels must be the same"
         print("Creating dataset. Matching some samples of data:")
-        print(f"{self.X[0]}   |   {self.Y[0]}")
-        print(f"{self.X[10]}   |   {self.Y[10]}")
-        print(f"{self.X[100]}   |   {self.Y[100]}")
+        print(f"{img_paths[0]}   |   {mask_paths[0]}")
+        print(f"{img_paths[10]}   |   {mask_paths[10]}")
+        print(f"{img_paths[100]}   |   {mask_paths[100]}")
+        self.X = [io.imread(self.input_data_dir / "images" / img_path) for img_path in img_paths]
+        self.Y = [io.imread(self.input_data_dir / "masks" / mask_path) for mask_path in mask_paths]
         self.common_transforms = common_transforms
 
-        assert len(self.X) == len(self.Y), "The number of images and labels must be the same"
         if metadata is None or len(metadata) == 0:
             self.metadata = {
                 "parent_dataset": "LIVECell",
@@ -231,8 +222,10 @@ class Segmentation_Dataset(Dataset):
         return len(self.X)
 
     def __getitem__(self, i):
-        data = io.imread(self.input_data_dir / "images" / self.X[i])
-        label = io.imread(self.input_data_dir / "masks" / self.Y[i])
+        # data = io.imread(self.input_data_dir / "images" / self.X[i])
+        # label = io.imread(self.input_data_dir / "masks" / self.Y[i])
+        data = self.X[i]
+        label = self.Y[i]
         if isinstance(self.metadata, list):
             meta = self.metadata[i]
         elif isinstance(self.metadata, dict):

@@ -9,13 +9,18 @@ import torch.optim as optim
 import argparse
 from pathlib import Path
 import pandas as pd
+import yaml
+import kagglehub
 import pdb
 
 #torch.autograd.set_detect_anomaly(True) #For debugging cuda errors
 parser = argparse.ArgumentParser()
+# kaggle credentials
+parser.add_argument("-k_u", "--kaggle_username", type=str, default=None, help="Kaggle username")
+parser.add_argument("-k_k", "--kaggle_key", type=str, default=None, help="Kaggle key")
 
 #basic usage
-parser.add_argument("-d_p", "--data_path", type=str, default="/kaggle/input/livecell-cellseg1", help="Path to the .pth file")
+parser.add_argument("-d_p", "--data_path", type=str, default="/kaggle/input/livecell-cellseg1", help="Path to the data folder")
 parser.add_argument("-data", "--dataset", type=str, default="segmentation", help="Name of the dataset to load")
 parser.add_argument('-source', '--source_dataset', default="all", type=str, help = "Which datasets to use for training. Input is 'all' or a list of datasets (e.g. [TNBC_2018,LyNSeC,IHC_TMA,CoNSeP])")
 parser.add_argument("-m_f", "--model_folder", type=str, default=None, help = "Name of the model to resume training. This must be a folder inside model_path")
@@ -31,6 +36,7 @@ parser.add_argument('-pixel_size', '--requested_pixel_size', default=None, type=
 #advanced usage
 parser.add_argument("-bs", "--batch_size", type=int, default=2)
 parser.add_argument("-e", "--num_epochs", type=int, default=50)
+parser.add_argument("-patience", "--patience", type=int, default=5, help = "Early stopping patience")
 parser.add_argument('-len_epoch', '--length_of_epoch', default=3188, type=int, help = "Number of samples per epoch")
 parser.add_argument("-lr", "--lr", type=float, default=0.001, help = "Learning rate")
 parser.add_argument("-m", "--model_str", type=str, default="InstanSeg_UNet", help = "Model backbone to use")
@@ -55,7 +61,7 @@ parser.add_argument('-binary_loss_fn', '--binary_loss_fn', default="lovasz_hinge
 parser.add_argument('-seed_loss_fn', '--seed_loss_fn', default="l1_distance", type=str, help = "Loss function to use for seed selection, only binary_xloss and l1_distance are supported. Binary_xloss is much faster, but l1_distance is usually more accurate")  # NOTE: TODO
 parser.add_argument('-anneal', '--cosineannealing', default=False, type=lambda x: (str(x).lower() == 'true'), help = "Whether to use cosine annealing for the learning rate")
 parser.add_argument('-o_h', '--optimize_hyperparameters', default=False, type=lambda x: (str(x).lower() == 'true'), help = "Whether to optimize hyperparameters every 10 epochs")
-parser.add_argument('-hotstart', '--hotstart_training', default=10, type=int, help = "Number of epochs to train the model with binary_xloss before starting the main training loop (default=10)")
+parser.add_argument('-hotstart', '--hotstart_training', default=5, type=int, help = "Number of epochs to train the model with binary_xloss before starting the main training loop (default=10)")
 parser.add_argument('-window', '--window_size', default=256, type=int, help = "Size of the window containing each instance")
 parser.add_argument('-multihead', '--multihead', default= True, type=lambda x: (str(x).lower() == 'true'), help = "Whether to branch the decoder into multiple heads.")
 parser.add_argument('-dim_coords', '--dim_coords', default=2, type=int, help = "Dimensionality of the coordinate system. Little support for anything but 2")
@@ -69,10 +75,17 @@ parser.add_argument('-rng_seed', '--rng_seed', default=42, type=int, help = "Opt
 parser.add_argument('-use_deterministic', '--use_deterministic', default=True, type=lambda x: (str(x).lower() == 'true'), help = "Whether to use deterministic algorithms (default=False)")  # NOTE: was False
 parser.add_argument('-tile', '--tile_size', default=512, type=int, help = "Tile sizes for the input images")
 
-def main(model, loss_fn, train_loader, test_loader, num_epochs=1000, epoch_name='output_epoch'):
+def main(model, loss_fn, train_loader, test_loader, num_epochs: int = 1000,
+         epoch_name: str = 'output_epoch', patience: int = 10):
     # doing additional imports
     from instanseg.utils.AI_utils import optimize_hyperparameters, train_epoch, test_epoch
     global best_f1_score, device, method, iou_threshold, args, optimizer, scheduler
+
+    # setting up kaggle account credentials
+    if args.kaggle_username is not None:
+        os.environ["KAGGLE_USERNAME"] = args.kaggle_username
+    if args.kaggle_key is not None:
+        os.environ["KAGGLE_KEY"] = args.kaggle_key
 
     # specifying lists for logging information
     train_losses = []
@@ -80,6 +93,7 @@ def main(model, loss_fn, train_loader, test_loader, num_epochs=1000, epoch_name=
     best_f1_score = -1
     f1_list = []
     f1_list_cells = []
+    no_improve_epochs = 0
 
     # training loop
     for epoch in range(num_epochs):
@@ -106,12 +120,12 @@ def main(model, loss_fn, train_loader, test_loader, num_epochs=1000, epoch_name=
         train_losses.append(train_loss)
         test_losses.append(test_loss)
         # optional hyperparameter optimization
-        if epoch % 10 ==0 and args.optimize_hyperparameters:
+        if epoch % 10 == 0 and args.optimize_hyperparameters:
             best_params = optimize_hyperparameters(model,postprocessing_fn = method.postprocessing,data_loader= test_loader,verbose = not args.on_cluster, show_progressbar = not args.on_cluster)
             method.update_hyperparameters(best_params)
         # current logs for printing
-        dict_to_print = {"train_loss": train_loss, "test_loss": test_loss, "training_time": int(train_time),
-                         "testing_time": int(test_time)}
+        dict_to_print = {"train_loss": train_loss, "test_loss": test_loss,
+                         "training_time": int(train_time), "testing_time": int(test_time)}
         # logging more stuff
         if args.cells_and_nuclei:
             f1_list.append(f1_score[0])
@@ -128,6 +142,18 @@ def main(model, loss_fn, train_loader, test_loader, num_epochs=1000, epoch_name=
             dict_to_print["lr:"] = optimizer.param_groups[0]["lr"]
             scheduler.step()
 
+        # saving current latest model state
+        torch.save({
+                'f1_score': float(best_f1_score),
+                'epoch': int(epoch),
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+            }, args.output_path / "model_weights_last.pth")
+        # uploading the model to kagglehub
+        if args.kaggle_username is not None and args.kaggle_key is not None:
+            model_path = args.output_path + "/model_weights_last.pth"
+            handle = 'eugenfromkharkov/instanseg-last-ckp/Other/default'
+            kagglehub.model_upload(handle, model_path, version_notes='Latest upload of model weights')
         # saving model if it is best for now
         if f1_score > best_f1_score or save_epoch_outputs:
             best_f1_score = np.maximum(f1_score, best_f1_score)
@@ -137,8 +163,17 @@ def main(model, loss_fn, train_loader, test_loader, num_epochs=1000, epoch_name=
                 'epoch': int(epoch),
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-            }, args.output_path / "model_weights.pth") 
-        
+            }, args.output_path / "model_weights_best.pth")
+            if args.kaggle_username is not None and args.kaggle_key is not None:
+                model_path = args.output_path + "/model_weights_best.pth"
+                handle = 'eugenfromkharkov/instanseg-best-ckp/Other/default'
+                kagglehub.model_upload(handle, model_path, version_notes='Best upload of model weights')
+        else:
+            no_improve_epochs += 1
+            if no_improve_epochs >= patience:
+                print("Early stopping triggered at epoch:", epoch)
+                break   # Exit the training loop
+
         # printing logs
         print(str(dict_to_print).replace("{", "").replace("}", "").replace("'", ""))
     return model, train_losses, test_losses, f1_list, f1_list_cells  # returning artifacts
@@ -148,6 +183,7 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
     """ The function implementing main training pipeline."""
     # preparation stuff
     global device, method, iou_threshold, args, optimizer, scheduler
+
     args = parser.parse_args()
     for key, value in kwargs.items():
         if hasattr(args, key):
@@ -283,8 +319,10 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
         if not os.path.exists(args.output_path / "epoch_outputs"):
             os.mkdir(args.output_path / "epoch_outputs")
     # TODO: save hyperparams as JSON or YAML file, not fucking CSV
-    pd.DataFrame.from_dict(args_dict, orient='index').to_csv(args.output_path / "experiment_log.csv",
-                                                            header=False)
+    # pd.DataFrame.from_dict(args_dict, orient='index').to_csv(args.output_path / "experiment_log.csv",
+    #                                                         header=False)
+    with open(args.output_path / "experiment_hyperparams.yaml", "w") as file:
+        yaml.dump(args_dict, file)
     iou_threshold = np.linspace(0.5, 1.0, 10)
 
     if args.hotstart_training > 0:
@@ -294,13 +332,15 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
         method.update_binary_loss("dice_loss")
         model, train_losses, test_losses, f1_list, f1_list_cells = main(model, loss_fn, train_loader,
                                                                         test_loader, num_epochs=hot_epochs,
-                                                                        epoch_name='hotstart_epoch')
+                                                                        epoch_name='hotstart_epoch',
+                                                                        patience=args.patience)
         print("Starting main training loop with",args.seed_loss_fn, "and", args.binary_loss_fn)
         method.update_seed_loss(args.seed_loss_fn)
         method.update_binary_loss(args.binary_loss_fn)
     # actually traiing model for a given number of epochs
-    # TODO: add early stopping for training
-    model, train_losses, test_losses, f1_list, f1_list_cells = main(model, loss_fn, train_loader, test_loader, num_epochs=num_epochs)
+    model, train_losses, test_losses, f1_list, f1_list_cells = main(model, loss_fn,
+                                                                    train_loader, test_loader,
+                                                                    num_epochs=num_epochs)
     from instanseg.utils.model_loader import load_model
     model, model_dict = load_model(folder="", path=args.output_path) #Load model from checkpoint
     model.eval()

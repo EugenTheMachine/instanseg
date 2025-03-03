@@ -151,7 +151,7 @@ def main(model, loss_fn, train_loader, test_loader, num_epochs: int = 1000,
             }, args.output_path / "model_weights_last.pth")
         # uploading the model to kagglehub
         if args.kaggle_username is not None and args.kaggle_key is not None:
-            model_path = args.output_path + "/model_weights_last.pth"
+            model_path = args.output_path / "model_weights_last.pth"
             handle = 'eugenfromkharkov/instanseg-last-ckp/Other/default'
             kagglehub.model_upload(handle, model_path, version_notes='Latest upload of model weights')
         # saving model if it is best for now
@@ -165,7 +165,7 @@ def main(model, loss_fn, train_loader, test_loader, num_epochs: int = 1000,
                 'optimizer_state_dict': optimizer.state_dict(),
             }, args.output_path / "model_weights_best.pth")
             if args.kaggle_username is not None and args.kaggle_key is not None:
-                model_path = args.output_path + "/model_weights_best.pth"
+                model_path = args.output_path / "model_weights_best.pth"
                 handle = 'eugenfromkharkov/instanseg-best-ckp/Other/default'
                 kagglehub.model_upload(handle, model_path, version_notes='Best upload of model weights')
         else:

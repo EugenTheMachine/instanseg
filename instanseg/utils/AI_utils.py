@@ -255,21 +255,15 @@ class Segmentation_Dataset(Dataset):
             data, label = self.Augmenter(data, label, meta)
         if len(label.shape) == 2:
             label = label[None, :]
-            if isinstance(label, np.ndarray):
-                if label.dtype == np.uint16:
-                    label = label.astype(np.int32)
-                label = torch.from_numpy(label)#.float()
         if len(data.shape) == 2:
             data = data[None, :]
-            if isinstance(data, np.ndarray):
-                if data.dtype == np.uint16:
-                    data = data.astype(np.int32)
-                data = torch.from_numpy(data)#.float()
+        data = torch.tensor(data, dtype=torch.float32)
+        label = torch.tensor(label, dtype=torch.int16)
 
         assert not data.isnan().any(), "Tranformed images contains NaN"
         assert not label.isnan().any(), "Transformed labels contains NaN"
 
-        return data.float(), label#.float()
+        return data, label#.float()
 
 
 def plot_loss(_model):

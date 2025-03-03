@@ -198,7 +198,6 @@ class Segmentation_Dataset(Dataset):
         print(f"{img_paths[-1]}   |   {mask_paths[-1]}")
         self.X = [io.imread(self.input_data_dir / "images" / img_path) for img_path in img_paths]
         self.Y = [io.imread(self.input_data_dir / "masks" / mask_path) for mask_path in mask_paths]
-        print(self.X[0].shape, self.Y[0].shape, self.input_data_dir / "images" / img_paths[0])
         self.common_transforms = common_transforms
 
         if metadata is None or len(metadata) == 0:
@@ -233,8 +232,8 @@ class Segmentation_Dataset(Dataset):
         else:
             raise ValueError("Metadata must be a list or a dictionary.")
 
-        if self.common_transforms:
-            data, label = self.Augmenter(data, label, meta)
+        # if self.common_transforms:
+        #     data, label = self.Augmenter(data, label, meta)
         if len(label.shape) == 2:
             label = label[None, :]
         if len(data.shape) == 2:

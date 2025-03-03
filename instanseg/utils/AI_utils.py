@@ -195,8 +195,7 @@ class Segmentation_Dataset(Dataset):
         assert len(img_paths) == len(mask_paths), "The number of images and labels must be the same"
         print("Creating dataset. Matching some samples of data:")
         print(f"{img_paths[0]}   |   {mask_paths[0]}")
-        print(f"{img_paths[10]}   |   {mask_paths[10]}")
-        print(f"{img_paths[100]}   |   {mask_paths[100]}")
+        print(f"{img_paths[-1]}   |   {mask_paths[-1]}")
         self.X = [io.imread(self.input_data_dir / "images" / img_path) for img_path in img_paths]
         self.Y = [io.imread(self.input_data_dir / "masks" / mask_path) for mask_path in mask_paths]
         self.common_transforms = common_transforms

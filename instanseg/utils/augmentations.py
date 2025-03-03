@@ -98,13 +98,14 @@ class Augmentations(object):
         self.config = {
             "bright_limit": 0.2,
             "contrast_limit": 0.2,
-            "bright_prob": 0.7,
+            "bright_prob": 0.5,
             "flip_prob": 0.5,
-            "crop_scale": (0.8, 1.0),
-            "crop_ratio": (0.9, 1.1),
-            "crop_prob": 0.8,
-            "scale_limit": 0.15,
-            "rotate_prob": 0.7
+            "crop_scale": (0.3, 1.0),
+            "crop_ratio": (0.75, 1.3333),
+            "crop_prob": 0.3,
+            "scale_limit": [-0.2, 0.2],
+            "rotate_prob": 0.4,
+            "size": 256
         }
         self.modality = modality
         self.cells_and_nuclei = cells_and_nuclei

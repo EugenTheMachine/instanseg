@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 import torch
 import cv2
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 from torch.utils.data import Dataset
 import numpy as np
 import matplotlib.pyplot as plt
@@ -235,6 +237,50 @@ class Segmentation_Dataset(Dataset):
                                        cells_and_nuclei=cells_and_nuclei,
                                        target_segmentation=target_segmentation,
                                        channel_invariant = channel_invariant)
+        
+        self.config = {
+            "bright_limit": 0.1,
+            "contrast_limit": 0.1,
+            "bright_prob": 0.5,
+            "flip_prob": 0.5,
+            "crop_scale": (0.3, 1.0),
+            "crop_ratio": (0.75, 1.3333),
+            "crop_prob": 0.3,
+            "scale_limit": [-0.2, 0.2],
+            "rotate_prob": 0.4,
+            "size": 256
+        }
+        self.transform = A.Compose(
+            [
+                A.RandomBrightnessContrast(
+                    brightness_limit=self.config["bright_limit"],
+                    contrast_limit=self.config["contrast_limit"],
+                    p=self.config["bright_prob"],
+                ),
+                A.HorizontalFlip(p=self.config["flip_prob"]),
+                A.VerticalFlip(p=self.config["flip_prob"]),
+                # A.RandomResizedCrop(
+                #     height=self.config["size"],
+                #     width=self.config["size"],
+                #     scale=self.config["crop_scale"],
+                #     ratio=self.config["crop_ratio"],
+                #     p=self.config["crop_prob"],
+                #     interpolation=cv2.INTER_LINEAR_EXACT,
+                # ),
+                A.ShiftScaleRotate(
+                    scale_limit=self.config["scale_limit"],
+                    rotate_limit=45,
+                    shift_limit=0.1,
+                    p=self.config["rotate_prob"],
+                    border_mode=cv2.BORDER_CONSTANT,
+                    interpolation=cv2.INTER_LINEAR,
+                ),
+                # A.Resize(height=512, width=512),
+                ToTensorV2()
+            ],
+            additional_targets={'mask': 'mask'}
+        )
+
     def __len__(self):
         return len(self.X)
 
@@ -252,13 +298,15 @@ class Segmentation_Dataset(Dataset):
         else:
             raise ValueError("Metadata must be a list or a dictionary.")
         if self.common_transforms and "train" in str(self.input_data_dir):
-            data, label = self.Augmenter(data, label, meta)
+            # data, label = self.Augmenter(data, label, meta)
+            transformed = self.transform(image=data, mask=label)
+            data, label = transformed['image'], transformed['mask']
         if len(label.shape) == 2:
             label = label[None, :]
         if len(data.shape) == 2:
             data = data[None, :]
         data = torch.tensor(data, dtype=torch.float32)
-        label = torch.tensor(label, dtype=torch.int16)
+        label = torch.tensor(label, dtype=torch.int32)
 
         assert not data.isnan().any(), "Tranformed images contains NaN"
         assert not label.isnan().any(), "Transformed labels contains NaN"

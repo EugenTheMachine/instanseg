@@ -820,7 +820,6 @@ class Augmentations(object):
                     brightness_limit=self.config["bright_limit"],
                     contrast_limit=self.config["contrast_limit"],
                     p=self.config["bright_prob"],
-                    apply_to=["image"],
                 ),
                 A.HorizontalFlip(p=self.config["flip_prob"]),
                 A.VerticalFlip(p=self.config["flip_prob"]),

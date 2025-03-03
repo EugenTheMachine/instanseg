@@ -850,7 +850,7 @@ class Augmentations(object):
             additional_targets={'mask': 'mask'}
         )
         transformed = transform(image=image, mask=labels)
-        image, labels = transformed['image'].float(), transformed['mask']
+        image, labels = transformed['image'].float(), transformed['mask'].float()
 
         image, labels = self.duplicate_grayscale_channels(image,
                                                           labels,

@@ -33,6 +33,7 @@ def train_epoch(train_model,
         image_batch = image_batch.to(train_device)
         labels = labels_batch.to(train_device)
         output = train_model(image_batch)
+        print(labels.dtype, output.dtype)
         loss = train_loss_fn(output, labels.clone()).mean()
         train_optimizer.zero_grad()
         loss.backward()
@@ -197,8 +198,8 @@ class Segmentation_Dataset(Dataset):
         print("Creating dataset. Matching some samples of data:")
         print(f"{img_paths[0]}   |   {mask_paths[0]}")
         print(f"{img_paths[-1]}   |   {mask_paths[-1]}")
-        images = [io.imread(self.input_data_dir / "images" / img_path) for img_path in img_paths]
-        masks = [io.imread(self.input_data_dir / "masks" / mask_path) for mask_path in mask_paths]
+        images = [io.imread(self.input_data_dir / "images" / img_path).astype(np.int16) for img_path in img_paths]
+        masks = [io.imread(self.input_data_dir / "masks" / mask_path).astype(np.int16) for mask_path in mask_paths]
         self.X = [
             cv2.resize(
                 image,
@@ -254,13 +255,13 @@ class Segmentation_Dataset(Dataset):
             data, label = self.Augmenter(data, label, meta)
         if len(label.shape) == 2:
             label = label[None, :]
-            if isinstance(label, np.ndarray):      
+            if isinstance(label, np.ndarray):
                 if label.dtype == np.uint16:
                     label = label.astype(np.int16)
                 label = torch.from_numpy(label)#.float()
         if len(data.shape) == 2:
             data = data[None, :]
-            if isinstance(data, np.ndarray):      
+            if isinstance(data, np.ndarray):
                 if data.dtype == np.uint16:
                     data = data.astype(np.int16)
                 data = torch.from_numpy(data)#.float()

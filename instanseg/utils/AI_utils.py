@@ -253,9 +253,17 @@ class Segmentation_Dataset(Dataset):
         if self.common_transforms and "train" in str(self.input_data_dir):
             data, label = self.Augmenter(data, label, meta)
         if len(label.shape) == 2:
-            label = torch.tensor(label[None, :])
+            label = label[None, :]
+            if isinstance(label, np.ndarray):      
+                if label.dtype == np.uint16:
+                    label = label.astype(np.int16)
+                label = torch.from_numpy(label)#.float()
         if len(data.shape) == 2:
-            data = torch.tensor(data[None, :])
+            data = data[None, :]
+            if isinstance(data, np.ndarray):      
+                if data.dtype == np.uint16:
+                    data = data.astype(np.int16)
+                data = torch.from_numpy(data)#.float()
 
         assert not data.isnan().any(), "Tranformed images contains NaN"
         assert not label.isnan().any(), "Transformed labels contains NaN"

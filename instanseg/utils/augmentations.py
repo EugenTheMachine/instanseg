@@ -114,7 +114,7 @@ class Augmentations(object):
             if self.debug:
                 orig = torch.clone(image)
             out = _move_channel_axis(image).float()
-        
+
             if normalize:
                 out, _ = self.normalize(out)
 
@@ -136,7 +136,7 @@ class Augmentations(object):
         out = out.squeeze()
         out = _move_channel_axis(torch.atleast_3d(out))
 
-    
+
         if self.debug:
             print("Tensor")
             show_images([orig, out], titles=["Original", "Transformed"])

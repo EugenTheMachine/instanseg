@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import torch
+import cv2
 from torch.utils.data import Dataset
 import numpy as np
 import matplotlib.pyplot as plt
@@ -196,8 +197,24 @@ class Segmentation_Dataset(Dataset):
         print("Creating dataset. Matching some samples of data:")
         print(f"{img_paths[0]}   |   {mask_paths[0]}")
         print(f"{img_paths[-1]}   |   {mask_paths[-1]}")
-        self.X = [io.imread(self.input_data_dir / "images" / img_path) for img_path in img_paths]
-        self.Y = [io.imread(self.input_data_dir / "masks" / mask_path) for mask_path in mask_paths]
+        images = [io.imread(self.input_data_dir / "images" / img_path) for img_path in img_paths]
+        masks = [io.imread(self.input_data_dir / "masks" / mask_path) for mask_path in mask_paths]
+        self.X = [
+            cv2.resize(
+                image,
+                (512, 512),
+                interpolation=cv2.INTER_LINEAR_EXACT,
+            )
+            for image in images
+        ]
+        self.Y = [
+            cv2.resize(
+                mask,
+                (512, 512),
+                interpolation=cv2.INTER_NEAREST_EXACT,
+            )
+            for mask in masks
+        ]
         self.common_transforms = common_transforms
 
         if metadata is None or len(metadata) == 0:
@@ -223,8 +240,10 @@ class Segmentation_Dataset(Dataset):
     def __getitem__(self, i):
         # data = io.imread(self.input_data_dir / "images" / self.X[i])
         # label = io.imread(self.input_data_dir / "masks" / self.Y[i])
-        data = torch.tensor(self.X[i])
-        label = torch.tensor(self.Y[i])
+        # data = np.stack([self.X[i]] * 3, axis=0)
+        # label = np.stack([self.Y[i]] * 3, axis=0)
+        data = self.X[i]
+        label = self.Y[i]
         if isinstance(self.metadata, list):
             meta = self.metadata[i]
         elif isinstance(self.metadata, dict):
@@ -232,8 +251,8 @@ class Segmentation_Dataset(Dataset):
         else:
             raise ValueError("Metadata must be a list or a dictionary.")
 
-        # if self.common_transforms:
-        #     data, label = self.Augmenter(data, label, meta)
+        if self.common_transforms:
+            data, label = self.Augmenter(data, label, meta)
         if len(label.shape) == 2:
             label = label[None, :]
         if len(data.shape) == 2:

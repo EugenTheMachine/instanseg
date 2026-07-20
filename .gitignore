@@ -36,7 +36,6 @@ instanseg/bio_2_delete/
 dist/
 env
 data
-dummy_data/
 runs/
 .cursor/
 .github/

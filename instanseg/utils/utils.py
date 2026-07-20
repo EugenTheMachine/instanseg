@@ -233,13 +233,12 @@ def display_as_grid(display_list,
                     title_height: int = 20,
                     fontsize: float = 12):
 
-    from instanseg.utils.augmentations import Augmentations
-    Augmenter = Augmentations()
+    from instanseg.utils.preprocessing import to_tensor
 
     tensor_list = []
     for i in display_list:
-        disp_tensor = Augmenter.to_tensor(i,normalize = False)[0].to("cpu")
-        h,w = disp_tensor.shape[1:]
+        disp_tensor = to_tensor(i, normalize=False).to("cpu")
+        h, w = disp_tensor.shape[1:]
         tensor_list.append(disp_tensor / disp_tensor.max())
 
     from torchvision.utils import make_grid
@@ -525,17 +524,21 @@ def display_cells_and_nuclei(lab):
     display = save_image_with_label_overlay(torch.zeros((lab.shape[-2],lab.shape[-1],3)), lab, return_image= True, label_boundary_mode=None,alpha = 1)
     return display
 
-def display_colourized(mIF, random_seed = 0):
-    from instanseg.utils.augmentations import Augmentations
-    Augmenter=Augmentations()
+def display_colourized(mIF, random_seed=0):
+    from instanseg.utils.preprocessing import to_tensor, normalize_percentile
+    from instanseg.utils.augmentations import Augmentations  # colourize still lives here
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        Augmenter = Augmentations()
 
-    mIF = Augmenter.to_tensor(mIF, normalize=False)[0]
-    if mIF.shape[0]!=3:
-        colour_render,_ = Augmenter.colourize(mIF, random_seed = random_seed)
+    mIF = to_tensor(mIF, normalize=False)
+    if mIF.shape[0] != 3:
+        colour_render, _ = Augmenter.colourize(mIF, random_seed=random_seed)
     else:
-        colour_render = Augmenter.to_tensor(mIF, normalize=True)[0]
+        colour_render = normalize_percentile(mIF)
     colour_render = torch.clamp_(colour_render, 0, 1)
-    colour_render = _move_channel_axis(colour_render,to_back = True).detach().numpy()*255
+    colour_render = _move_channel_axis(colour_render, to_back=True).detach().numpy() * 255
     return colour_render.astype(np.uint8)
 
 def _display_overlay(im, lab):
@@ -758,22 +761,24 @@ def export_to_torchscript(model_str: str, show_example: bool = False, output_dir
     model.eval()
     model.to(device)
 
-    cells_and_nuclei = model_dict['cells_and_nuclei']
+    cells_and_nuclei = model_dict.get('cells_and_nuclei', False)  # kept for model-weight compatibility only
     pixel_size = model_dict['pixel_size']
     n_sigma = model_dict['n_sigma']
 
-
-    input_data = tifffile.imread(os.path.join(example_path,"HE_example.tif"))
-    #input_data = tifffile.imread("../examples/LuCa1.tif")
-    from instanseg.utils.augmentations import Augmentations
-    Augmenter = Augmentations()
-    input_tensor, _ = Augmenter.to_tensor(input_data, normalize=False)
-    input_tensor, _ = Augmenter.normalize(input_tensor)
+    input_data = tifffile.imread(os.path.join(example_path, "HE_example.tif"))
+    from instanseg.utils.preprocessing import to_tensor, normalize_percentile, rescale_to_pixel_size
+    input_tensor = to_tensor(input_data, normalize=False)
+    input_tensor = normalize_percentile(input_tensor)
 
     if not math.isnan(pixel_size):
-        input_tensor, _ = Augmenter.torch_rescale(input_tensor, current_pixel_size=0.5, requested_pixel_size=pixel_size, crop =True, modality="Brightfield")
+        input_tensor = rescale_to_pixel_size(
+            input_tensor,
+            current_pixel_size=0.5,
+            requested_pixel_size=pixel_size,
+            crop=True,
+            modality="Brightfield",
+        )
     input_tensor = input_tensor.to(device)
-
 
     if input_tensor.shape[0] != model_dict["dim_in"] and model_dict["dim_in"] != 0 and model_dict["dim_in"] is not None:
         input_tensor = torch.randn((model_dict["dim_in"], input_tensor.shape[1], input_tensor.shape[2])).to(device)
@@ -782,13 +787,13 @@ def export_to_torchscript(model_str: str, show_example: bool = False, output_dir
         dim_in = 3
 
     from instanseg.utils.loss.instanseg_loss import InstanSeg_Torchscript
-    super_model = InstanSeg_Torchscript(model, cells_and_nuclei=cells_and_nuclei, 
-                                        pixel_size = pixel_size, 
-                                        n_sigma = n_sigma, 
-                                        params = params, 
-                                        feature_engineering_function = str(model_dict["feature_engineering"]), 
-                                        backbone_dim_in= dim_in, 
-                                        to_centre = bool(model_dict["to_centre"])).to(device)
+    super_model = InstanSeg_Torchscript(model, cells_and_nuclei=cells_and_nuclei,
+                                        pixel_size=pixel_size,
+                                        n_sigma=n_sigma,
+                                        params=params,
+                                        feature_engineering_function=str(model_dict["feature_engineering"]),
+                                        backbone_dim_in=dim_in,
+                                        to_centre=bool(model_dict["to_centre"])).to(device)
     
 
     out = super_model(input_tensor[None,])
@@ -873,7 +878,8 @@ def download_model(model_str: str, version: Optional[str] = None, verbose : bool
         if os.path.isdir(output_path) and os.path.exists(path_to_torchscript_model) and not force:
             if verbose:
                 print(f"Model {model['name']} version {model['version']} already downloaded in {bioimageio_path}, loading")
-            return torch.jit.load(path_to_torchscript_model)
+            with open(path_to_torchscript_model, 'rb') as f:
+                return torch.jit.load(f)
 
         response = requests.get(url)
         response.raise_for_status()  # Raise an error for bad responses
@@ -884,7 +890,8 @@ def download_model(model_str: str, version: Optional[str] = None, verbose : bool
         if verbose:
             print(f"Model {model['name']} version {model['version']} downloaded and extracted to {bioimageio_path}")
 
-        return torch.jit.load(path_to_torchscript_model)
+        with open(path_to_torchscript_model, 'rb') as f:
+            return torch.jit.load(f)
 
     else:
         #load model locally
@@ -896,6 +903,7 @@ def download_model(model_str: str, version: Optional[str] = None, verbose : bool
         path_to_torchscript_model = os.path.join(bioimageio_path, model_path, "instanseg.pt")
 
         if os.path.exists(path_to_torchscript_model):
-            return torch.jit.load(path_to_torchscript_model)
+            with open(path_to_torchscript_model, 'rb') as f:
+                return torch.jit.load(f)
         else:
             raise Exception(f"Model {path_to_torchscript_model} version {version} not found in the release data or locally. Please check the model name and try again.")

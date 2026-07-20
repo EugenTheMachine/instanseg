@@ -7,16 +7,18 @@
 
 ## Overview
 
-InstanSeg is a pytorch-based cell and nucleus segmentation pipeline for fluorescence and brightfield microscopy images. This README provides instructions for setting up the environment, installing dependencies, and using the provided tools and models.
+InstanSeg is a pytorch-based **cell segmentation** pipeline for fluorescence and brightfield microscopy images. This README provides instructions for setting up the environment, installing dependencies, and using the provided tools and models.
+
+> **v2.0 — Breaking changes:** InstanSeg now exclusively performs **cell segmentation**. Nucleus-only and combined nucleus+cell segmentation targets are deprecated (see [Migration Guide](#migration-guide-v1x--v20) below). Augmentation is handled via [albumentations](https://albumentations.ai); the legacy `Augmentations` class is deprecated.
 
 ## Why should I use InstanSeg?
 
 1. InstanSeg is freely available and open source.
 2. It's faster than other cell segmentation methods… sometimes much faster.
-3. It's capable of accurately segmenting both nuclei and whole cells.
+3. It's highly accurate at whole-cell segmentation across fluorescence and brightfield imaging modalities.
 4. InstanSeg can be entirely compiled in TorchScript - including postprocessing! This means it's not only easy to use in Python but also works with LibTorch alone. This allows you to run InstanSeg directly in QuPath!
-5. You can use InstanSeg on multiplexed images (images that have more than three channels) on novel biomarker panels, without retraining or manual intervention.
-6. We plan to release more InstanSeg models trained on public datasets. If there's a nucleus and/or cell segmentation dataset under a permissive open license (e.g. CC0 or CC-BY) that we missed, let us know, and we may be able to increase our InstanSeg model zoo.
+5. InstanSeg uses a standard [albumentations](https://albumentations.ai) augmentation pipeline — easy to customise and extend.
+6. We plan to release more InstanSeg models trained on public datasets. If there's a cell segmentation dataset under a permissive open license (e.g. CC0 or CC-BY) that we missed, let us know, and we may be able to increase our InstanSeg model zoo.
  
 
 ## InstanSeg has its own QuPath extension!
@@ -27,11 +29,11 @@ InstanSeg is introduced in the [QuPath pre-release v0.6.0-rc2](https://github.co
 
 If you use InstanSeg for nucleus segmentation of brightfield histology images, please cite:
 
-> Goldsborough, T. et al. (2024) ‘InstanSeg: an embedding-based instance segmentation algorithm optimized for accurate, efficient and portable cell segmentation’. _arXiv_. Available at: https://doi.org/10.48550/arXiv.2408.15954.
+> Goldsborough, T. et al. (2024) 'InstanSeg: an embedding-based instance segmentation algorithm optimized for accurate, efficient and portable cell segmentation'. _arXiv_. Available at: https://doi.org/10.48550/arXiv.2408.15954.
 
 If you use InstanSeg for nucleus and/or cell segmentation in fluorescence images, please cite:
 
-> Goldsborough, T. et al. (2024) ‘A novel channel invariant architecture for the segmentation of cells and nuclei in multiplexed images using InstanSeg’. _bioRxiv_, p. 2024.09.04.611150. Available at: https://doi.org/10.1101/2024.09.04.611150.
+> Goldsborough, T. et al. (2024) 'A novel channel invariant architecture for the segmentation of cells and nuclei in multiplexed images using InstanSeg'. _bioRxiv_, p. 2024.09.04.611150. Available at: https://doi.org/10.1101/2024.09.04.611150.
 
 
 
@@ -46,8 +48,9 @@ If you use InstanSeg for nucleus and/or cell segmentation in fluorescence images
 - [InstanSeg has its own QuPath extension!](#instanseg-has-its-own-qupath-extension)
 - [How to cite InstanSeg:](#how-to-cite-instanseg)
 - [Table of Contents](#table-of-contents)
+- [Migration Guide v1.x → v2.0](#migration-guide-v1x--v20)
+- [Project Structure](#project-structure)
 - [Installing using pip](#installing-using-pip)
-  - [Local Installation](#local-installation)
   - [GPU Version (CUDA) for Windows and Linux](#gpu-version-cuda-for-windows-and-linux)
   - [Setup Repository](#setup-repository)
 - [Usage](#usage)
@@ -57,6 +60,85 @@ If you use InstanSeg for nucleus and/or cell segmentation in fluorescence images
   - [Using InstanSeg for inference](#using-instanseg-for-inference)
   - [Model versioning](#model-versioning)
 
+---
+
+## Migration Guide v1.x → v2.0
+
+### Inference
+
+No changes required for standard cell segmentation. If your code used nucleus or joint outputs, update as shown:
+
+```python
+# v1.x — requested nucleus channel (now deprecated)
+labeled_output = instanseg.eval_small_image(image, pixel_size, target="nuclei")
+# v1.x — requested both channels (now returns cells only)
+labeled_output = instanseg.eval_small_image(image, pixel_size, target="all_outputs")
+
+# v2.0 — cells only (default)
+labeled_output = instanseg.eval_small_image(image, pixel_size)
+labeled_output = instanseg.eval_small_image(image, pixel_size, target="cells")  # explicit
+```
+
+### Augmentation
+
+The `Augmentations` class (`instanseg/utils/augmentations.py`) is deprecated. Use the new preprocessing module:
+
+```python
+# v1.x
+from instanseg.utils.augmentations import Augmentations
+aug = Augmentations()
+tensor, _ = aug.to_tensor(image, normalize=True)
+tensor, _ = aug.torch_rescale(tensor, labels, current_pixel_size=0.5, requested_pixel_size=0.25)
+
+# v2.0
+from instanseg.utils.preprocessing import to_tensor, rescale_to_pixel_size, build_augmentation_pipeline
+tensor = to_tensor(image, normalize=True)
+tensor = rescale_to_pixel_size(tensor, current_pixel_size=0.5, requested_pixel_size=0.25)
+
+# Training augmentation pipeline (albumentations-based):
+pipeline = build_augmentation_pipeline()
+```
+
+### Biological utilities
+
+`instanseg/utils/biological_utils.py` (N/C ratio, nucleus-cell IoU, marker subcellular location, UMAP clustering) is deprecated and emits `DeprecationWarning` on import. There is no replacement in the active pipeline — pin to v1.x if you need these utilities.
+
+### Training
+
+`cells_and_nuclei=True` on `InstanSeg` (loss class), `InstanSeg_Torchscript`, and `Segmentation_Dataset` now emits `DeprecationWarning`. Pre-trained joint models continue to load and run correctly; only the cells channel is used at inference time.
+
+---
+
+## Project Structure
+
+```
+instanseg/
+├── instanseg/
+│   ├── inference_class.py        # Main public API — InstanSeg class
+│   ├── model.py                  # InstanSegModel training wrapper
+│   └── utils/
+│       ├── preprocessing.py      # Image preprocessing (normalize, resize, augment)
+│       ├── postprocessing.py     # Post-processing (peak finding, NMS, label merging)
+│       ├── AI_utils.py           # Training loop, Segmentation_Dataset
+│       ├── utils.py              # Visualization, export, device helpers
+│       ├── pytorch_utils.py      # Low-level torch helpers
+│       ├── tiling.py             # Sliding-window / WSI tiling inference
+│       ├── metrics.py            # AP / F1 metrics
+│       └── loss/
+│           ├── instanseg_loss.py    # InstanSeg loss function
+│           └── lovasz_losses.py     # Lovász surrogate losses
+├── tests/                        # Integration tests (require model weights)
+├── refactoring_tests/            # Unit tests for refactored modules
+│   ├── test_preprocessing.py     # 27 tests — preprocessing.py
+│   ├── test_postprocessing.py    # 22 tests — postprocessing.py
+│   └── test_deprecations.py      # 18 tests — all deprecation warnings
+└── instanseg/scripts/
+    ├── train.py
+    ├── test.py
+    └── inference.py
+```
+
+---
 
 ## Installing using pip
 
@@ -65,20 +147,23 @@ For a minimal installation:
 pip install instanseg-torch
 ```
 
-if you want all the requirements used for training:
+If you want all the requirements used for training:
 
 ```bash
 pip install instanseg-torch[full]
 ```
+
 You can get started immediately by calling the InstanSeg class:
 
 ```python
 from instanseg import InstanSeg
-instanseg_brightfield = InstanSeg("brightfield_nuclei", image_reader= "tiffslide", verbosity=1)
+instanseg_brightfield = InstanSeg("brightfield_nuclei", image_reader="tiffslide", verbosity=1)
 
-labeled_output = instanseg_brightfield.eval(image = "../instanseg/examples/HE_example.tif",
-                                            save_output = True,
-                                            save_overlay = True)
+labeled_output = instanseg_brightfield.eval(
+    image="../instanseg/examples/HE_example.tif",
+    save_output=True,
+    save_overlay=True,
+)
 ```
 
 Alternatively, if you want more control over the intermediate steps:
@@ -86,12 +171,12 @@ Alternatively, if you want more control over the intermediate steps:
 ```python
 image_array, pixel_size = instanseg_brightfield.read_image("../instanseg/examples/HE_example.tif")
 
-labeled_output, image_tensor  = instanseg_brightfield.eval_small_image(image_array, pixel_size)
+labeled_output, image_tensor = instanseg_brightfield.eval_small_image(image_array, pixel_size)
 
 display = instanseg_brightfield.display(image_tensor, labeled_output)
 
 from instanseg.utils.utils import show_images
-show_images(image_tensor,display, colorbar=False, titles = ["Normalized Image", "Image with segmentation"])
+show_images(image_tensor, display, colorbar=False, titles=["Normalized Image", "Image with segmentation"])
 ```
 
 ### GPU Version (CUDA) for Windows and Linux
@@ -110,7 +195,7 @@ If you intend to use GPU acceleration and CUDA, follow these additional steps:
     python -c "import torch; print('CUDA is available') if torch.cuda.is_available() else print('CUDA is not available')"
     ```
 
-The repository may work with older versions of CUDA. For this replace "12.1" and "12" with the required version. 
+The repository may work with older versions of CUDA. Replace "12.1" and "12" with the required version.
 
 ### Setup Repository
 
@@ -131,17 +216,21 @@ To train InstanSeg on your own dataset, extend the **instanseg/notebooks/load_da
 
 To train models using InstanSeg, use the **train.py** script under the scripts folder.
 
-For example, to train InstanSeg on the TNBC_2018 dataset over 250 epochs at a pixel resolution of 0.25 microns/pixel, run the following command:
+Training accepts an `embedding_mode` setting for the coordinate embedding and instance separation strategy. Supported values are `center-seed`, `border-seed`, `center-cluster`, `border-cluster`, `combined-center`, and `combined-cluster`. Set it in YAML as `training.embedding_mode` or pass it through the Python training wrapper as an override.
+
+For example, to train InstanSeg on the TNBC_2018 dataset over 250 epochs at a pixel resolution of 0.25 microns/pixel:
 ```bash
 cd instanseg/scripts
 python train.py -data segmentation_dataset.pth -source "[TNBC_2018]" --num_epochs 250 --experiment_str my_first_instanseg --requested_pixel_size 0.25
 ```
 
-To train a channel invariant InstanSeg on the CPDMI_2023 dataset, predicting both nuclei and cells, run the following command:
+To train a channel-invariant InstanSeg on the CPDMI_2023 dataset (cell segmentation):
 ```bash
 cd instanseg/scripts
-python train.py -data segmentation_dataset.pth -source "[CPDMI_2023]" --num_epochs 250 --experiment_str my_first_instanseg -target NC --channel_invariant True --requested_pixel_size 0.5
+python train.py -data segmentation_dataset.pth -source "[CPDMI_2023]" --num_epochs 250 --experiment_str my_first_instanseg --channel_invariant True --requested_pixel_size 0.5
 ```
+
+> **Deprecated:** The `-target NC` (nuclei+cells) training flag is deprecated. Only cell segmentation (`-target C`) is supported going forward.
 
 Each epoch should take approximately 1 to 3 minutes to complete (with mps or cuda support).
 
@@ -160,12 +249,11 @@ python test.py --model_folder my_first_instanseg -test_set Test --params best_pa
 ```bash
 python inference.py --model_folder my_first_instanseg --image_path ../examples
 ```
-Replace "../examples" with the path to your images. If InstanSeg cannot read the image pixel size from the image metadata, the user is required to provide a --pixel_size parameter. InstanSeg provides (limited) support for whole slide images (WSIs). For more options and configurations, refer to the parser arguments in the inference.py file.
+Replace "../examples" with the path to your images. If InstanSeg cannot read the image pixel size from the image metadata, the user is required to provide a `--pixel_size` parameter. InstanSeg provides (limited) support for whole slide images (WSIs). For more options and configurations, refer to the parser arguments in the inference.py file.
 
 ### Model versioning
 
-Links to different model versions are stored in `instanseg/models/model-index.json`. When releasing new models, 
-you should add entries to this JSON file, optionally removing any previous versions that shouldn't be available in future versions.
+Links to different model versions are stored in `instanseg/models/model-index.json`. When releasing new models, add entries to this JSON file, optionally removing any previous versions that shouldn't be available in future versions.
 
 An example entry looks like this:
 

@@ -1,3 +1,30 @@
+"""
+augmentation_config.py
+----------------------
+Legacy augmentation configuration dicts and biological-marker metadata.
+
+.. deprecated::
+    This entire module is deprecated as of v2.0.0.
+
+    * ``get_augmentation_dict`` is superseded by
+      ``instanseg.utils.preprocessing.build_augmentation_pipeline``, which
+      provides a clean albumentations-based pipeline.
+    * ``markers_info`` / ``markers_info_gpt`` are biological metadata that are
+      no longer used anywhere in the training or inference pipeline.
+
+    This module is kept only for reference / backward compatibility.
+"""
+
+import warnings as _warnings
+_warnings.warn(
+    "instanseg.utils.augmentation_config is deprecated and will be removed in "
+    "a future release.  Use instanseg.utils.preprocessing.build_augmentation_pipeline "
+    "for augmentation pipelines.  Biological marker metadata (markers_info) is "
+    "no longer used by the active pipeline.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import collections
 
 def get_augmentation_dict(dim_in,nuclei_channel,amount,pixel_size=0.5, augmentation_type="minimal"):

@@ -20,6 +20,18 @@ parser.add_argument("-tile_size", "--tile_size", type=int, default= 512, help="t
 parser.add_argument("-batch_size", "--batch_size", type=int, default= 3, help="batch size, only useful for large images")
 parser.add_argument("-save_geojson", "--save_geojson", type=lambda x: (str(x).lower() == 'true'), default= False, help="Output geojson files of the segmentation")
 
+
+class Logger:
+    def __init__(self, log_file_path):
+        self.log_file_path = Path(log_file_path)
+        self.log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def log(self, message):
+        print(message)
+        with open(self.log_file_path, "a", encoding="utf-8") as f:
+            f.write(str(message) + "\n")
+
+
 def file_matches_requirement(root,file, exclude_str):
     if not os.path.isfile(os.path.join(root,file)):
         return False
@@ -39,9 +51,13 @@ if __name__ == "__main__":
     from instanseg import InstanSeg
 
     parser = parser.parse_args()
+    log_dir = Path(parser.image_path) if parser.image_path is not None and os.path.isdir(parser.image_path) else Path(".")
+    logger = Logger(log_dir / "inference.log")
+    logger.log("Starting inference")
+    logger.log(f"Arguments: {vars(parser)}")
 
     if parser.image_path is None or not os.path.exists(parser.image_path):
-        print("Please provide a valid image path")
+        logger.log("Please provide a valid image path")
         # from instanseg.utils.utils import drag_and_drop_file
         # parser.image_path = drag_and_drop_file()
         # print("Using image path: ", parser.image_path)
@@ -53,11 +69,11 @@ if __name__ == "__main__":
     instanseg.prediction_tag = prediction_tag
 
     if not parser.recursive:
-        print("Loading files from: ", parser.image_path)
+        logger.log(f"Loading files from: {parser.image_path}")
         files = os.listdir(parser.image_path)
         files = [os.path.join(parser.image_path, file) for file in files if file_matches_requirement(parser.image_path, file, parser.exclude_str)]
     else:
-        print("Loading files recursively from: ", parser.image_path)
+        logger.log(f"Loading files recursively from: {parser.image_path}")
         files = []
         for root, dirs, filenames in os.walk(parser.image_path):
             for filename in filenames:
@@ -65,11 +81,12 @@ if __name__ == "__main__":
                     files.append(os.path.join(root, filename))
 
     assert len(files) > 0, "No files found in the specified directory"
+    logger.log(f"Found {len(files)} files for inference")
 
     
     for file in tqdm(files):
 
-        print("Processing: ", file)
+        logger.log(f"Processing: {file}")
 
         _ = instanseg.eval(image=file,
                         pixel_size = parser.pixel_size,
@@ -78,6 +95,8 @@ if __name__ == "__main__":
                         save_geojson = parser.save_geojson,
                         batch_size = parser.batch_size,
                         tile_size = parser.tile_size,)
+
+    logger.log("Inference complete")
 
 
 

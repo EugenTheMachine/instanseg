@@ -111,15 +111,28 @@ class InstanSeg():
         :param verbosity: The verbosity level. 0 is silent, 1 is normal, 2 is verbose.
         """
         from instanseg.utils.utils import download_model, _choose_device
+        from pathlib import Path
 
         self.verbosity = verbosity
         self.verbose = verbosity != 0
+        self.inference_device = _choose_device(device, verbose= self.verbose)
 
         if isinstance(model_type, nn.Module):
             self.instanseg = model_type
         else:
-            self.instanseg = download_model(model_type, verbose = self.verbose)
-        self.inference_device = _choose_device(device, verbose= self.verbose)
+            p = Path(model_type)
+            if p.exists() or (Path("runs") / model_type).exists() or (Path("models") / model_type).exists():
+                from instanseg.utils.model_loader import load_model
+                folder = model_type
+                path = "runs" if (Path("runs") / model_type).exists() else ("models" if (Path("models") / model_type).exists() else str(p.parent))
+                if not (Path("runs") / model_type).exists() and not (Path("models") / model_type).exists():
+                    folder = p.name
+                
+                model, build_model_dictionary = load_model(folder=folder, path=path, device=self.inference_device)
+                self.instanseg = model
+            else:
+                self.instanseg = download_model(model_type, verbose = self.verbose)
+                
         self.instanseg = self.instanseg.to(self.inference_device)
 
         self.prefered_image_reader = image_reader
@@ -421,18 +434,46 @@ class InstanSeg():
                 image = _to_ndim(image, 4)
                 image = torch.stack([percentile_normalize(i) for i in image]) #over the batch dimension
 
-        if target != "all_outputs" and self.instanseg.cells_and_nuclei:
-            assert target in ["nuclei", "cells"], "Target must be 'nuclei', 'cells' or 'all_outputs'."
-            if target == "nuclei":
-                target_segmentation = torch.tensor([1,0])
-            else:
-                target_segmentation = torch.tensor([0,1])
-        else:
-            target_segmentation = torch.tensor([1,1])
+        is_maskrcnn = (self.instanseg.__class__.__name__ == 'MaskRCNN')
 
-        with torch.amp.autocast('cuda'):
-            instanseg_kwargs = {k: v for k, v in kwargs.items() if k not in ["batch_size", "tile_size", "normalisation_subsampling_factor"]}
-            instances = self.instanseg(image,target_segmentation = target_segmentation, **instanseg_kwargs)
+        if is_maskrcnn:
+            target_segmentation = torch.tensor([1, 1])
+        else:
+            if self.instanseg.cells_and_nuclei:
+                # cells_and_nuclei models: always return cells only (index 1).
+                # Nuclei segmentation is deprecated per REFACTORING.MD.
+                if target == "nuclei":
+                    import warnings
+                    warnings.warn(
+                        "Requesting 'nuclei' output is deprecated. Only cell segmentation "
+                        "is supported. The nuclei channel is returned for backwards compatibility.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
+                    target_segmentation = torch.tensor([1, 0])
+                else:
+                    # "all_outputs" and "cells" both return cells only
+                    target_segmentation = torch.tensor([0, 1])
+            else:
+                target_segmentation = torch.tensor([1, 1])
+
+        if is_maskrcnn:
+            self.instanseg.eval()
+            instances_list = []
+            for img in image:
+                img_normalized = img / 255.0 if img.max() > 1.0 else img
+                with torch.no_grad():
+                    with torch.amp.autocast('cuda'):
+                        pred = self.instanseg([img_normalized])
+                H, W = img.shape[1:]
+                from instanseg.scripts.test import maskrcnn_to_labeled_mask
+                lbl_mask = maskrcnn_to_labeled_mask(pred[0], (H, W))
+                instances_list.append(torch.as_tensor(lbl_mask, device=image.device))
+            instances = torch.stack(instances_list).unsqueeze(1)
+        else:
+            with torch.amp.autocast('cuda'):
+                instanseg_kwargs = {k: v for k, v in kwargs.items() if k not in ["batch_size", "tile_size", "normalisation_subsampling_factor"]}
+                instances = self.instanseg(image,target_segmentation = target_segmentation, **instanseg_kwargs)
 
         if pixel_size is not None and img_has_been_rescaled and rescale_output:  
             instances = interpolate(instances, size=original_shape[-2:], mode="nearest")
@@ -476,6 +517,12 @@ class InstanSeg():
         from instanseg.utils.utils import percentile_normalize, _move_channel_axis
 
     
+        is_maskrcnn = (self.instanseg.__class__.__name__ == 'MaskRCNN')
+        if is_maskrcnn:
+            return self.eval_small_image(image=image, pixel_size=pixel_size, normalise=normalise,
+                                         return_image_tensor=return_image_tensor, target=target,
+                                         rescale_output=rescale_output, **kwargs)
+
         image = _to_tensor_float32(image)
         
         from instanseg.utils.tiling import _sliding_window_inference
@@ -500,17 +547,23 @@ class InstanSeg():
             image = percentile_normalize(image, subsampling_factor=normalisation_subsampling_factor)
             
 
-        output_dimension = 2 if self.instanseg.cells_and_nuclei else 1
+        output_dimension = 1  # Always single channel: cells only
 
-        if target != "all_outputs" and output_dimension == 2:
-            assert target in ["nuclei", "cells"], "Target must be 'nuclei', 'cells' or 'all_outputs'."
+        if self.instanseg.cells_and_nuclei:
+            # Joint model: always target cells (index 1) unless nuclei explicitly requested.
             if target == "nuclei":
-                target_segmentation = torch.tensor([1,0])
+                import warnings
+                warnings.warn(
+                    "Requesting 'nuclei' output is deprecated. Only cell segmentation "
+                    "is supported. The nuclei channel is returned for backwards compatibility.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                target_segmentation = torch.tensor([1, 0])
             else:
-                target_segmentation = torch.tensor([0,1])
-            output_dimension = 1
+                target_segmentation = torch.tensor([0, 1])
         else:
-            target_segmentation = torch.tensor([1,1])
+            target_segmentation = torch.tensor([1, 1])
 
         instances = _sliding_window_inference(image,
                                               self.instanseg,

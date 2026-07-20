@@ -12,6 +12,13 @@ from albumentations.pytorch import ToTensorV2
 from instanseg.utils.utils import percentile_normalize, generate_colors
 import warnings
 
+warnings.warn(
+    "instanseg.utils.augmentations is deprecated and will be removed in a future release. "
+    "Use the albumentations-based pipeline in instanseg.utils.preprocessing instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import time
 import fastremap
 
@@ -83,6 +90,14 @@ def generate_random_label_area(min=30, max=30):
 
 
 def get_marker_location(meta):
+    """Deprecated: biological marker metadata is no longer used. Cell segmentation is
+    based solely on the input image. This function will be removed in a future release."""
+    warnings.warn(
+        "get_marker_location() is deprecated and will be removed. "
+        "Biological marker metadata is no longer used in cell segmentation.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     from instanseg.utils.augmentation_config import markers_info
     stains = [channel_str.split(" ")[0] for channel_str in meta['channel_names']]
     subcellular_location = ["N/A" if channel.upper() not in markers_info.keys() else markers_info[channel.upper()]['Subcellular Location'] for channel in stains]
@@ -90,12 +105,35 @@ def get_marker_location(meta):
     return meta
     
 class Augmentations(object):
+    """Deprecated augmentation class.
+
+    .. deprecated::
+        The entire ``Augmentations`` class is deprecated. Use the
+        albumentations-based helpers in :mod:`instanseg.utils.preprocessing`
+        instead (``build_augmentation_pipeline``, ``apply_augmentation_pipeline``,
+        ``to_tensor``, ``normalize_percentile``, ``rescale_to_pixel_size``).
+
+        Biological marker metadata and ``cells_and_nuclei`` support have been
+        removed; only cell segmentation based on the raw input image is
+        supported.
+    """
+
     def __init__(self, augmentation_dict: dict = None, shape=(256, 256), dim_in=3,
-                 nuclei_channel=None, debug=False, modality=None, cells_and_nuclei=False, target_segmentation="N",channel_invariant = False):
+                 nuclei_channel=None, debug=False, modality=None, cells_and_nuclei=False,
+                 target_segmentation="C", channel_invariant=False):
+        warnings.warn(
+            "Augmentations is deprecated. Use instanseg.utils.preprocessing helpers instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if cells_and_nuclei:
+            warnings.warn(
+                "cells_and_nuclei support is deprecated. Only cell segmentation is performed.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.debug = debug
         self.shape = shape
-        # self.augmentation_dict = augmentation_dict
-        # Define your configuration parameters
         self.config = {
             "bright_limit": 0.1,
             "contrast_limit": 0.1,
@@ -109,12 +147,13 @@ class Augmentations(object):
             "size": 256
         }
         self.modality = modality
-        self.cells_and_nuclei = cells_and_nuclei
+        self.cells_and_nuclei = False  # cells_and_nuclei is deprecated; always False
         self.target_segmentation = target_segmentation
-        self.dim_in = dim_in  # Note, this is the number of input channels to the model, not the number of channels in the raw image. (Can be 'None' for channel invariant models)
-        self.nuclei_channel = nuclei_channel  # The channel that contains the nuclei. (Can be 'None' for brightfield images or if in image metadata)
+        self.dim_in = dim_in
+        self.nuclei_channel = nuclei_channel
         self.channel_invariant = channel_invariant
     def to_tensor(self, image, labels=None, normalize=False, amount=None, metadata=None):
+        """Deprecated: use :func:`instanseg.utils.preprocessing.to_tensor` instead."""
         if isinstance(image, np.ndarray):
             if self.debug:
                 orig = image.copy()
@@ -160,12 +199,19 @@ class Augmentations(object):
 
     def normalize(self, image: torch.Tensor, labels=None, amount: float = 0., subsampling_factor: int = 1,
                   percentile=0.1, metadata=None):
+        """Deprecated: use :func:`instanseg.utils.preprocessing.normalize_percentile` instead."""
         out = percentile_normalize(image, subsampling_factor=subsampling_factor, percentile=percentile)
-
         return out, labels
     
 
     def extract_hematoxylin_stain(self, image: torch.Tensor, labels=None, amount=0, metadata=None):
+        """Deprecated: stain separation via biological metadata is no longer supported."""
+        warnings.warn(
+            "extract_hematoxylin_stain() is deprecated. Stain separation based on biological "
+            "metadata is no longer supported. Cell segmentation uses only the raw input image.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # image should be 3 channel RGB between 0 and 255 (float32)
         if metadata is not None and metadata["image_modality"] != "Brightfield":
             return image, labels
@@ -197,6 +243,12 @@ class Augmentations(object):
         return out, labels
 
     def normalize_HE_stains(self, image: torch.Tensor, labels=None, amount=0, metadata=None):
+        """Deprecated: stain normalisation based on biological metadata is no longer supported."""
+        warnings.warn(
+            "normalize_HE_stains() is deprecated. Use albumentations colour-jitter transforms instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # image should be 3 channel RGB between 0 and 255 (float32)
         if metadata is not None and metadata["image_modality"] != "Brightfield":
             return image, labels
@@ -672,7 +724,8 @@ class Augmentations(object):
 
     
     def torch_rescale(self, image, labels=None, amount=0, current_pixel_size=None, requested_pixel_size=None, crop=True,
-                      random_seed=None, metadata=None, modality = None):
+                      random_seed=None, metadata=None, modality=None):
+        """Deprecated: use :func:`instanseg.utils.preprocessing.rescale_to_pixel_size` instead."""
 
     
 

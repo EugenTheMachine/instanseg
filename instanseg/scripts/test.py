@@ -7,6 +7,7 @@ import argparse
 import fastremap
 import time
 import numpy as np
+from contextlib import nullcontext
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-d_p", "--data_path", type=str, default=r"../datasets")
@@ -28,11 +29,65 @@ parser.add_argument('-export_to_torchscript', '--export_to_torchscript', default
 parser.add_argument('-export_to_bioimageio', '--export_to_bioimageio', default=False,type=lambda x: (str(x).lower() == 'true'))
 
 
+class Logger:
+    def __init__(self, log_file_path):
+        self.log_file_path = Path(log_file_path)
+        self.log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def log(self, message):
+        print(message)
+        with open(self.log_file_path, "a", encoding="utf-8") as f:
+            f.write(str(message) + "\n")
+
+
+def is_cuda_device(device):
+    return str(device).startswith("cuda") and torch.cuda.is_available()
+
+
+def synchronize_if_cuda(device):
+    if is_cuda_device(device):
+        torch.cuda.synchronize()
+
+
+def autocast_if_cuda(device):
+    if is_cuda_device(device):
+        return torch.amp.autocast("cuda")
+    return nullcontext()
+
+
+def maskrcnn_to_labeled_mask(pred_dict, shape, threshold=0.5, score_threshold=0.5):
+    H, W = shape
+    labeled_mask = np.zeros((H, W), dtype=np.int16)
+    
+    masks = pred_dict['masks']
+    scores = pred_dict['scores']
+    
+    if len(masks) == 0:
+        return labeled_mask
+        
+    masks = masks.cpu().numpy()
+    scores = scores.cpu().numpy()
+    
+    sorted_idxs = np.argsort(scores)
+    
+    inst_id = 1
+    for idx in sorted_idxs:
+        score = scores[idx]
+        if score < score_threshold:
+            continue
+        mask = masks[idx, 0]
+        binary_mask = mask > threshold
+        labeled_mask[binary_mask] = inst_id
+        inst_id += 1
+        
+    return labeled_mask
+
 #@timer
 def instanseg_inference(val_images, val_labels, model, postprocessing_fn, device, parser_args, output_path, params=None,
-                        instanseg=None, tta=False):
+                        instanseg=None, tta=False, logger=None):
+    is_maskrcnn = (model.__class__.__name__ == 'MaskRCNN')
     
-    if tta:
+    if tta and not is_maskrcnn:
         import ttach as tta
 
         transforms = tta.Compose([
@@ -55,73 +110,101 @@ def instanseg_inference(val_images, val_labels, model, postprocessing_fn, device
     #####
     imgs, _ = Augmenter.to_tensor(val_images[0], normalize=False)
     imgs = imgs.to(device)
-    imgs, _ = Augmenter.normalize(imgs)
-    with torch.no_grad():
-        imgs, pad = _instanseg_padding(imgs, extra_pad=0, min_dim=32)
-        with torch.amp.autocast("cuda"):
-            pred = model(imgs[None,])
-        pred = pred.float()
-        pred = _recover_padding(pred, pad).squeeze(0)
-        if params is not None:
-            with torch.amp.autocast("cuda"):
-                lab = postprocessing_fn(pred, **params, window_size=parser_args.window_size)
-        else:
-            with torch.amp.autocast("cuda"):
-                lab = postprocessing_fn(pred, img=imgs, window_size=parser_args.window_size)
-        lab = lab.cpu().numpy()
+    if is_maskrcnn:
+        imgs_normalized = imgs / 255.0
+        with torch.no_grad():
+            with autocast_if_cuda(device):
+                pred = model([imgs_normalized])
+    else:
+        imgs, _ = Augmenter.normalize(imgs)
+        with torch.no_grad():
+            imgs, pad = _instanseg_padding(imgs, extra_pad=0, min_dim=32)
+            with autocast_if_cuda(device):
+                pred = model(imgs[None,])
+            pred = pred.float()
+            pred = _recover_padding(pred, pad).squeeze(0)
+            if params is not None:
+                with autocast_if_cuda(device):
+                    lab = postprocessing_fn(pred, **params, window_size=parser_args.window_size)
+            else:
+                with autocast_if_cuda(device):
+                    lab = postprocessing_fn(pred, img=imgs, window_size=parser_args.window_size)
+            lab = lab.cpu().numpy()
 
-        if tta:
-            lab = method.TTA_postprocessing(imgs[None,], model, transforms, device=device)
+            if tta:
+                lab = method.TTA_postprocessing(imgs[None,], model, transforms, device=device)
 
     with torch.no_grad():
         for imgs, masks in tqdm(zip(val_images, val_labels), total=len(val_images)):
 
-            torch.cuda.synchronize()
+            synchronize_if_cuda(device)
             start = time.time()
             imgs, masks = Augmenter.to_tensor(imgs, masks, normalize=False)
             imgs = imgs.to(device)
-            imgs, _ = Augmenter.normalize(imgs)
+            
+            if is_maskrcnn:
+                imgs_normalized = imgs / 255.0
+            else:
+                imgs_normalized, _ = Augmenter.normalize(imgs)
+                
             time_dict["preprocessing"] += time.time() - start
-            torch.cuda.synchronize()
+            synchronize_if_cuda(device)
             start = time.time()
 
-            if not tta:
-                imgs, pad = _instanseg_padding(imgs, extra_pad=0, min_dim=32, ensure_square=False)
-                with torch.amp.autocast("cuda"):
-                    pred = model(imgs[None,])
-
-                pred = _recover_padding(pred, pad).squeeze(0)
-                imgs = _recover_padding(imgs, pad).squeeze(0)
-                torch.cuda.synchronize()
-
+            if is_maskrcnn:
+                with autocast_if_cuda(device):
+                    predictions = model([imgs_normalized])
+                synchronize_if_cuda(device)
                 model_time = time.time() - start
                 time_dict["model"] += model_time
-
+                
                 start = time.time()
-
-                if params is not None:
-                    with torch.amp.autocast("cuda"):
-                        lab = postprocessing_fn(pred, **params, window_size=parser_args.window_size)
-                else:
-                    with torch.amp.autocast("cuda"):
-                        lab = postprocessing_fn(pred, img=imgs, window_size=parser_args.window_size)
-
-                torch.cuda.synchronize()
-
+                H, W = imgs.shape[1:]
+                lab = maskrcnn_to_labeled_mask(predictions[0], (H, W))
+                synchronize_if_cuda(device)
                 postprocessing_time = time.time() - start
-
                 time_dict["postprocessing"] += postprocessing_time
-
+                
                 time_dict["combined"].append({"time": model_time + postprocessing_time, "dimension": imgs.shape,
-                                              "num_instances": len(torch.unique(lab) - 1)})
-
+                                              "num_instances": len(np.unique(lab)) - 1})
             else:
-                if params is not None:
-                    lab = method.TTA_postprocessing(imgs[None,], model, transforms, **params,
-                                                    window_size=parser_args.window_size, device=device)
+                if not tta:
+                    imgs_normalized, pad = _instanseg_padding(imgs_normalized, extra_pad=0, min_dim=32, ensure_square=False)
+                    with autocast_if_cuda(device):
+                        pred = model(imgs_normalized[None,])
+
+                    pred = _recover_padding(pred, pad).squeeze(0)
+                    imgs_normalized = _recover_padding(imgs_normalized, pad).squeeze(0)
+                    synchronize_if_cuda(device)
+
+                    model_time = time.time() - start
+                    time_dict["model"] += model_time
+
+                    start = time.time()
+
+                    if params is not None:
+                        with autocast_if_cuda(device):
+                            lab = postprocessing_fn(pred, **params, window_size=parser_args.window_size)
+                    else:
+                        with autocast_if_cuda(device):
+                            lab = postprocessing_fn(pred, img=imgs_normalized, window_size=parser_args.window_size)
+
+                    synchronize_if_cuda(device)
+
+                    postprocessing_time = time.time() - start
+
+                    time_dict["postprocessing"] += postprocessing_time
+
+                    time_dict["combined"].append({"time": model_time + postprocessing_time, "dimension": imgs_normalized.shape,
+                                                  "num_instances": len(torch.unique(lab) - 1)})
+
                 else:
-                    lab = method.TTA_postprocessing(imgs[None,], model, transforms, window_size=parser_args.window_size,
-                                                    device=device)
+                    if params is not None:
+                        lab = method.TTA_postprocessing(imgs_normalized[None,], model, transforms, **params,
+                                                        window_size=parser_args.window_size, device=device)
+                    else:
+                        lab = method.TTA_postprocessing(imgs_normalized[None,], model, transforms, window_size=parser_args.window_size,
+                                                        device=device)
 
             imgs = imgs.cpu().numpy()
 
@@ -150,8 +233,15 @@ def instanseg_inference(val_images, val_labels, model, postprocessing_fn, device
                 show_images(overlay(display.numpy(), torch.tensor(lab)),
                             save_str=output_path / str("images/" "overlay" + str(count)))
 
-    print("Time spent in preprocessing", time_dict["preprocessing"], "Time spent in model:", time_dict["model"],
-          "Time spent in postprocessing:", time_dict["postprocessing"])
+    timing_message = (
+        f"Time spent in preprocessing: {time_dict['preprocessing']} "
+        f"Time spent in model: {time_dict['model']} "
+        f"Time spent in postprocessing: {time_dict['postprocessing']}"
+    )
+    if logger is not None:
+        logger.log(timing_message)
+    else:
+        print(timing_message)
 
     return pred_masks, gt_masks, time_dict
 
@@ -172,15 +262,30 @@ if __name__ == "__main__":
     data_path = Path(parser_args.data_path)
     os.environ["INSTANSEG_DATASET_PATH"] = str(parser_args.data_path)
     device = parser_args.device
-    n_sigma = model_dict['n_sigma']
+
+    is_maskrcnn = (model.__class__.__name__ == 'MaskRCNN')
 
     model_path = Path(parser_args.model_path) / Path(parser_args.model_folder)
+    output_path = model_path / parser_args.output_folder
+    os.makedirs(output_path, exist_ok=True)
+    logger = Logger(output_path / "test.log")
+    logger.log("Starting evaluation")
+    logger.log(f"Arguments: {vars(parser_args)}")
 
-    parser_args.loss_function = model_dict['loss_function']
+    parser_args.loss_function = model_dict.get('loss_function', 'instanseg_loss')
     if parser_args.source_dataset is None:
-        parser_args.source_dataset = model_dict['source_dataset']
+        parser_args.source_dataset = model_dict.get('source_dataset', 'all')
 
-    if parser_args.loss_function.lower() == "instanseg_loss":
+    if is_maskrcnn:
+        parser_args.cells_and_nuclei = False
+        parser_args.target_segmentation = "C"
+        parser_args.pixel_size = None
+        
+        def get_labels(pred, **kwargs):
+            return pred
+        postprocessing_fn = get_labels
+        
+    elif parser_args.loss_function.lower() == "instanseg_loss":
         from instanseg.utils.loss.instanseg_loss import InstanSeg
 
         method = InstanSeg(binary_loss_fn_str=model_dict["binary_loss_fn"], seed_loss_fn=model_dict["seed_loss_fn"],
@@ -235,13 +340,10 @@ if __name__ == "__main__":
         val_images, val_labels = _read_images_from_path(sets=[parser_args.test_set])
 
     datasets_str = np.unique([item['parent_dataset'] for item in val_meta])
-    print("Datasets used:", datasets_str)
+    logger.log(f"Datasets used: {datasets_str}")
 
     model.to(device)
 
-    output_path = model_path / parser_args.output_folder
-    if not os.path.exists(output_path):
-        os.mkdir(output_path)
     if parser_args.save_ims:
         if not os.path.exists(output_path / "images"):
             os.mkdir(output_path / "images")
@@ -260,8 +362,7 @@ if __name__ == "__main__":
     # val_data = [Augmenter.normalize(img,label,percentile=0.) for img, label in val_data]
 
     if parser_args.pixel_size is not None and parser_args.pixel_size != "None":
-        print("Warning, rescaling image and ground truth labels to pixel size:", parser_args.pixel_size,
-              "microns/pixel")
+        logger.log(f"Warning, rescaling image and ground truth labels to pixel size: {parser_args.pixel_size} microns/pixel")
 
         for i, (img, label) in enumerate(val_data):
             if "pixel_size" not in val_meta[i].keys():
@@ -291,7 +392,7 @@ if __name__ == "__main__":
         [(len(label[label > 0].flatten())) / f for f, label in
          zip(freq, val_labels)])  # this will break for images with 0 labels
 
-    print("Found:", sum(freq), "instances, across", len(freq), "images.", "Median area:", np.median(area), "pixels")
+    logger.log(f"Found: {sum(freq)} instances, across {len(freq)} images. Median area: {np.median(area)} pixels")
 
     if parser_args.optimize_hyperparameters:
         from instanseg.utils.AI_utils import optimize_hyperparameters
@@ -312,11 +413,11 @@ if __name__ == "__main__":
     if parser_args.export_to_torchscript:
         from instanseg.utils.utils import export_to_torchscript
 
-        print("Exporting model to torchscript")
+        logger.log("Exporting model to torchscript")
         export_to_torchscript(parser_args.model_folder)
         instanseg = torch.jit.load("../torchscripts/" + parser_args.model_folder + ".pt")
     if parser_args.export_to_bioimageio:
-        print("Exporting model to bioimageio")
+        logger.log("Exporting model to bioimageio")
         from instanseg.utils.create_bioimageio_model import export_bioimageio
 
         instanseg = torch.jit.load("../torchscripts/" + parser_args.model_folder + ".pt")
@@ -332,7 +433,8 @@ if __name__ == "__main__":
                                                           output_path=output_path,
                                                           params=params,
                                                           instanseg=instanseg,
-                                                          tta=parser_args.tta)
+                                                          tta=parser_args.tta,
+                                                          logger=logger)
 
     pd.DataFrame(time_dict['combined']).to_csv(output_path / "timing_dict.csv", header=True)
 
@@ -343,12 +445,14 @@ if __name__ == "__main__":
         pred_cell_masks = [pred_mask[1] for gt_mask, pred_mask in zip(gt_masks, pred_masks) if gt_mask[1].min() >= 0]
         gt_cell_masks = [gt_mask[1] for gt_mask, pred_mask in zip(gt_masks, pred_masks) if gt_mask[1].min() >= 0]
 
-        compute_and_export_metrics(gt_nuclei_masks, pred_nuclei_masks, output_path, target="Nuclei")
-        compute_and_export_metrics(gt_cell_masks, pred_cell_masks, output_path, target="Cells")
+        compute_and_export_metrics(gt_nuclei_masks, pred_nuclei_masks, output_path, target="Nuclei", logger=logger)
+        compute_and_export_metrics(gt_cell_masks, pred_cell_masks, output_path, target="Cells", logger=logger)
     else:
         pred_masks = [(pred_mask).squeeze()[None] for gt_mask, pred_mask in zip(gt_masks, pred_masks) if
                       gt_mask.min() >= 0]
         gt_masks = [(gt_mask).squeeze()[None] for gt_mask, pred_mask in zip(gt_masks, pred_masks) if gt_mask.min() >= 0]
         compute_and_export_metrics(gt_masks, pred_masks, output_path,
-                                   target="Cells" if parser_args.target_segmentation == "C" else "Nuclei")
+                                   target="Cells" if parser_args.target_segmentation == "C" else "Nuclei",
+                                   logger=logger)
+    logger.log("Evaluation complete")
 

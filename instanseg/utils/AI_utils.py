@@ -1,4 +1,5 @@
 import os
+import random
 from pathlib import Path
 import torch
 import cv2
@@ -115,128 +116,76 @@ def test_epoch(test_model,
     return sum(test_loss) / 569, mean1_f1, end - start
 
 
+def resize_keeping_aspect_ratio(image, imgsz, is_mask=False):
+    H, W = image.shape[:2]
+    max_side = max(H, W)
+    scale = imgsz / max_side
+    new_H = int(round(H * scale))
+    new_W = int(round(W * scale))
+    if is_mask:
+        interpolation = getattr(cv2, 'INTER_NEAREST_EXACT', cv2.INTER_NEAREST)
+    else:
+        interpolation = getattr(cv2, 'INTER_LINEAR_EXACT', cv2.INTER_LINEAR)
+    return cv2.resize(image, (new_W, new_H), interpolation=interpolation)
+
+
 def collate_fn(data):
-    # data is of length batch size
-    # data[0][0] is first image, data[0][1] os the first label
-
-    # print(data[0][0].shape,len(data))
-    """
-       data: is a list of tuples with (example, label, length)
-             where 'example' is a tensor of arbitrary shape
-             and label/length are scalars
-    """
     imgs, labels = zip(*data)
-    lengths = [img.shape[0] for img in imgs]
-
-    max_len = max(lengths)
-    C, H, W = data[0][0].shape
-    images = torch.zeros((len(data), max_len, H, W))
-    labels = torch.stack(labels)
-    lengths = torch.tensor(lengths)
-
-    for i, img in enumerate(imgs):
-        images[i, :len(img)] = img
-
+    
+    # Find max H and max W in this batch
+    max_H = max(img.shape[-2] for img in imgs)
+    max_W = max(img.shape[-1] for img in imgs)
+    
+    padded_imgs = []
+    padded_labels = []
+    
+    for img, label in zip(imgs, labels):
+        C, H, W = img.shape
+        padded_img = torch.zeros((C, max_H, max_W), dtype=img.dtype)
+        padded_img[:, :H, :W] = img
+        padded_imgs.append(padded_img)
+        
+        l_shape = label.shape
+        if len(l_shape) == 3:
+            padded_label = torch.full((l_shape[0], max_H, max_W), -1, dtype=label.dtype)
+            padded_label[:, :H, :W] = label
+        else:
+            padded_label = torch.full((max_H, max_W), -1, dtype=label.dtype)
+            padded_label[:H, :W] = label
+        padded_labels.append(padded_label)
+        
+    images = torch.stack(padded_imgs)
+    labels = torch.stack(padded_labels)
+    lengths = torch.tensor([img.shape[0] for img in imgs])
     return images, labels, lengths.int()
-
-
-# # import fastremap
-# class Segmentation_Dataset():
-#     def __init__(self, img, label, common_transforms=True, metadata=None, size=(256, 256), augmentation_dict=None,
-#                  dim_in=3, debug=False, cells_and_nuclei=False, target_segmentation="N", channel_invariant = False):
-#         self.X = img
-#         self.Y = label
-#         self.common_transforms = common_transforms
-
-#         assert len(self.X) == len(self.Y), "The number of images and labels must be the same"
-#         if len(metadata) == 0:
-#             self.metadata = [None] * len(self.X)
-#         else:
-#             self.metadata = metadata
-
-#         assert len(self.X) == len(self.metadata), print("The number of images and metadata must be the same")
-#         self.size = size
-#         self.Augmenter = Augmentations(augmentation_dict=augmentation_dict, debug=debug, shape=self.size,
-#                                        dim_in=dim_in, cells_and_nuclei=cells_and_nuclei,
-#                                        target_segmentation=target_segmentation, channel_invariant = channel_invariant)
-
-#     def __len__(self):
-#         return len(self.X)
-
-#     def __getitem__(self, i):
-
-#         data = self.X[i]
-#         label = self.Y[i]
-#         meta = self.metadata[i]
-
-#         if self.common_transforms:
-#             data, label = self.Augmenter(data, label, meta)
-
-#         if len(label.shape) == 2:
-#             label = label[None, :]
-#         if len(data.shape) == 2:
-#             data = data[None, :]
-
-#         assert not data.isnan().any(), "Tranformed images contains NaN"
-#         assert not label.isnan().any(), "Transformed labels contains NaN"
-
-#         return data.float(), label
 
 
 class Segmentation_Dataset(Dataset):
     def __init__(self, input_data_dir, common_transforms=True, metadata=None, size=(512, 512),
                  augmentation_dict=None, dim_in=3, debug=False, cells_and_nuclei=False,
-                 target_segmentation="C", channel_invariant = True):
-        # we are given input data dir for a SUBSET of data, so no sub-sub-sets in here
-        # self.X = img
-        # self.Y = label
-        self.input_data_dir = Path(input_data_dir)
-        # self.X = sorted(os.listdir(self.input_data_dir / "images"))
-        # self.Y = sorted(os.listdir(self.input_data_dir / "masks"))
-        img_paths = sorted(os.listdir(self.input_data_dir / "images"))
-        mask_paths = sorted(os.listdir(self.input_data_dir / "masks"))
-        assert len(img_paths) == len(mask_paths), "The number of images and labels must be the same"
-        print("Creating dataset. Matching some samples of data:")
-        print(f"{img_paths[0]}   |   {mask_paths[0]}")
-        print(f"{img_paths[-1]}   |   {mask_paths[-1]}")
-        images = [io.imread(self.input_data_dir / "images" / img_path).astype(np.uint8) for img_path in img_paths]
-        masks = [io.imread(self.input_data_dir / "masks" / mask_path).astype(np.int16) for mask_path in mask_paths]
-        self.X = [
-            cv2.resize(
-                image,
-                (512, 512),
-                interpolation=cv2.INTER_LINEAR_EXACT,
+                 target_segmentation="C", channel_invariant=True, imgsz=512, augmentation_seed=None):
+        import warnings
+        if cells_and_nuclei:
+            warnings.warn(
+                "cells_and_nuclei is deprecated and will be ignored. Only cell segmentation is supported.",
+                DeprecationWarning,
+                stacklevel=2,
             )
-            for image in images
-        ]
-        self.Y = [
-            cv2.resize(
-                mask,
-                (512, 512),
-                interpolation=cv2.INTER_NEAREST_EXACT,
+        if metadata is not None:
+            warnings.warn(
+                "The metadata parameter is deprecated and will be ignored. "
+                "Cell segmentation uses only the raw input image.",
+                DeprecationWarning,
+                stacklevel=2,
             )
-            for mask in masks
-        ]
         self.common_transforms = common_transforms
-
-        if metadata is None or len(metadata) == 0:
-            self.metadata = {
-                "parent_dataset": "LIVECell",
-                "licence": "CC BY 4.0",
-                "pixel_size": 0.25,
-                "image_modality": "Brightfield",
-                "stain": "H&E"
-            }
-        else:
-            self.metadata = metadata
-        # assert len(self.X) == len(self.metadata), print("The number of images and metadata must be the same")
+        self.augmentation_seed = augmentation_seed
+        self.imgsz = imgsz
         self.size = size
-        self.Augmenter = Augmentations(augmentation_dict=augmentation_dict, debug=debug,
-                                       shape=self.size, dim_in=dim_in,
-                                       cells_and_nuclei=cells_and_nuclei,
-                                       target_segmentation=target_segmentation,
-                                       channel_invariant = channel_invariant)
-        
+        self.dim_in = dim_in
+        self.channel_invariant = channel_invariant
+        self.debug = debug
+
         self.config = {
             "bright_limit": 0.1,
             "contrast_limit": 0.1,
@@ -249,68 +198,107 @@ class Segmentation_Dataset(Dataset):
             "rotate_prob": 0.4,
             "size": 256
         }
-        self.transform = A.Compose(
-            [
-                A.RandomBrightnessContrast(
-                    brightness_limit=self.config["bright_limit"],
-                    contrast_limit=self.config["contrast_limit"],
-                    p=self.config["bright_prob"],
-                ),
-                A.HorizontalFlip(p=self.config["flip_prob"]),
-                A.VerticalFlip(p=self.config["flip_prob"]),
-                # A.RandomResizedCrop(
-                #     height=self.config["size"],
-                #     width=self.config["size"],
-                #     scale=self.config["crop_scale"],
-                #     ratio=self.config["crop_ratio"],
-                #     p=self.config["crop_prob"],
-                #     interpolation=cv2.INTER_LINEAR_EXACT,
-                # ),
-                A.ShiftScaleRotate(
-                    scale_limit=self.config["scale_limit"],
-                    rotate_limit=45,
-                    shift_limit=0.1,
-                    p=self.config["rotate_prob"],
-                    border_mode=cv2.BORDER_CONSTANT,
-                    interpolation=cv2.INTER_LINEAR,
-                ),
-                # A.Resize(height=512, width=512),
-                ToTensorV2()
-            ],
-            additional_targets={'mask': 'mask'}
+        if isinstance(input_data_dir, tuple):
+            self.img_paths, self.mask_paths = input_data_dir
+        else:
+            self.input_data_dir = Path(input_data_dir)
+            img_dir = self.input_data_dir / "images"
+            mask_dir = self.input_data_dir / "masks"
+            assert img_dir.exists() and mask_dir.exists(), f"Expected folder structure <input_data_dir>/images and <input_data_dir>/masks, got {input_data_dir}"
+            self.img_paths = sorted([img_dir / f for f in os.listdir(img_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.tiff', '.tif'))])
+            self.mask_paths = sorted([mask_dir / f for f in os.listdir(mask_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.tiff', '.tif'))])
+            assert len(self.img_paths) == len(self.mask_paths), "The number of images and labels must be the same"
+
+        from instanseg.utils.preprocessing import build_augmentation_pipeline
+        self.transform = build_augmentation_pipeline(
+            bright_limit=self.config["bright_limit"],
+            contrast_limit=self.config["contrast_limit"],
+            bright_prob=self.config["bright_prob"],
+            flip_prob=self.config["flip_prob"],
+            scale_limit=tuple(self.config["scale_limit"]),
+            rotate_prob=self.config["rotate_prob"],
+            seed=int(augmentation_seed) if augmentation_seed is not None else None,
         )
 
     def __len__(self):
-        return len(self.X)
+        return len(self.img_paths)
+
+    def _read_pair(self, index):
+        image_path = self.img_paths[index]
+        mask_path = self.mask_paths[index]
+        suffix = image_path.suffix.lower()
+        if suffix in ('.tif', '.tiff'):
+            import tifffile
+
+            image = tifffile.imread(image_path)
+        else:
+            image = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
+            if image is None:
+                raise FileNotFoundError(f"Unable to read image {image_path}")
+            if image.ndim == 2:
+                image = image[:, :, None]
+        mask_suffix = mask_path.suffix.lower()
+        if mask_suffix in ('.tif', '.tiff'):
+            import tifffile
+
+            mask = tifffile.imread(mask_path)
+        else:
+            mask = cv2.imread(str(mask_path), cv2.IMREAD_UNCHANGED)
+            if mask is None:
+                raise FileNotFoundError(f"Unable to read mask {mask_path}")
+        if mask.ndim == 3:
+            mask = mask[:, :, 0]
+        mask = mask.astype(np.int16)
+        image = image.astype(np.uint8) if image.dtype != np.uint8 else image
+        image = np.ascontiguousarray(image)
+        mask = np.ascontiguousarray(mask)
+        image = resize_keeping_aspect_ratio(image, self.imgsz, is_mask=False)
+        mask = resize_keeping_aspect_ratio(mask, self.imgsz, is_mask=True)
+        return image, mask
 
     def __getitem__(self, i):
-        # data = io.imread(self.input_data_dir / "images" / self.X[i])
-        # label = io.imread(self.input_data_dir / "masks" / self.Y[i])
-        # data = np.stack([self.X[i]] * 3, axis=0)
-        # label = np.stack([self.Y[i]] * 3, axis=0)
-        data = self.X[i]
-        label = self.Y[i]
-        if isinstance(self.metadata, list):
-            meta = self.metadata[i]
-        elif isinstance(self.metadata, dict):
-            meta = self.metadata
-        else:
-            raise ValueError("Metadata must be a list or a dictionary.")
-        if self.common_transforms and "train" in str(self.input_data_dir):
-            # data, label = self.Augmenter(data, label, meta)
+        data, label = self._read_pair(i)
+
+        if self.common_transforms:
+            if isinstance(data, np.ndarray) and data.ndim == 3 and data.shape[2] in (1, 2, 3, 4):
+                data = np.transpose(data, (2, 0, 1))  # HWC -> CHW after load
+            if isinstance(label, np.ndarray) and label.ndim == 3:
+                label = label[0]
+            if self.augmentation_seed is not None:
+                self.transform.set_random_seed(int(self.augmentation_seed) + int(i))
             transformed = self.transform(image=data, mask=label)
             data, label = transformed['image'], transformed['mask']
-        if len(label.shape) == 2:
-            label = label[None, :]
-        if len(data.shape) == 2:
-            data = data[None, :]
-        data = torch.tensor(data, dtype=torch.float32)
-        label = torch.tensor(label, dtype=torch.int16)
+        else:
+            if isinstance(data, np.ndarray):
+                if data.ndim == 3:
+                    data = np.ascontiguousarray(np.transpose(data, (2, 0, 1)))
+                else:
+                    data = np.ascontiguousarray(data[np.newaxis, ...])
+                data = torch.as_tensor(data, dtype=torch.float32)
+            elif isinstance(data, torch.Tensor):
+                data = data.float()
+                if data.ndim == 2:
+                    data = data.unsqueeze(0)
 
-        assert not data.isnan().any(), "Tranformed images contains NaN"
-        assert not label.isnan().any(), "Transformed labels contains NaN"
+            if isinstance(label, np.ndarray):
+                if label.ndim == 3:
+                    label = label[0]
+                label = np.ascontiguousarray(label)
+                label = torch.as_tensor(label, dtype=torch.int16)
+            elif isinstance(label, torch.Tensor):
+                if label.ndim == 3:
+                    label = label[0]
+                label = label.to(torch.int16)
 
-        return data, label#.float()
+        if isinstance(data, torch.Tensor) and data.ndim == 2:
+            data = data.unsqueeze(0)
+        if isinstance(label, torch.Tensor) and label.ndim == 2:
+            label = label.unsqueeze(0)
+
+        data = data.float()
+        label = label.to(torch.int16)
+        assert not data.isnan().any(), "Transformed images contains NaN"
+        return data, label
 
 
 def plot_loss(_model):

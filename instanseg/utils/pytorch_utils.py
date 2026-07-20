@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -90,13 +91,34 @@ def instance_wise_edt(x: torch.Tensor, edt_type: str = 'auto') -> torch.Tensor:
 
     use_edt = edt_type == 'edt' or (edt_type != 'monai' and not x.is_cuda)
     if use_edt:
-        import edt
-        xedt = torch.from_numpy(edt.edt(x[0].cpu().numpy(), black_border=False))
-        x = torch_onehot(x)[0] * xedt.to(x.device)
+        try:
+            import edt
+            xedt = torch.from_numpy(edt.edt(x[0].cpu().numpy(), black_border=False))
+            x = torch_onehot(x)[0] * xedt.to(x.device)
+        except ImportError:
+            try:
+                from scipy.ndimage import distance_transform_edt
+                x_onehot = torch_onehot(x)[0]
+                xedt = torch.zeros_like(x_onehot, dtype=torch.float32)
+                for c in range(x_onehot.shape[0]):
+                    xedt[c] = torch.from_numpy(distance_transform_edt(x_onehot[c].cpu().numpy() > 0))
+                x = x_onehot * xedt.to(x.device)
+            except ImportError:
+                import monai
+                x = torch_onehot(x)
+                x = monai.transforms.utils.distance_transform_edt(x[0])
     else:
-        import monai
-        x = torch_onehot(x)
-        x = monai.transforms.utils.distance_transform_edt(x[0])
+        try:
+            import monai
+            x = torch_onehot(x)
+            x = monai.transforms.utils.distance_transform_edt(x[0])
+        except ImportError:
+            from scipy.ndimage import distance_transform_edt
+            x_onehot = torch_onehot(x)[0]
+            xedt = torch.zeros_like(x_onehot, dtype=torch.float32)
+            for c in range(x_onehot.shape[0]):
+                xedt[c] = torch.from_numpy(distance_transform_edt(x_onehot[c].cpu().numpy() > 0))
+            x = x_onehot * xedt.to(x.device)
 
     # Normalize instance distances to have max 1
     x = x / (x.flatten(1).max(1)[0]).view(-1, 1, 1)
@@ -106,6 +128,92 @@ def instance_wise_edt(x: torch.Tensor, edt_type: str = 'auto') -> torch.Tensor:
         x = x.type(torch.FloatTensor).to('mps')
     return x
 
+
+def instance_wise_border_vectors_and_distances(
+    x: torch.Tensor,
+    normalize: bool = True,
+    edt_type: str = 'auto',
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute nearest border vectors and distances for each instance pixel.
+
+    Parameters
+    ----------
+    x: Tensor of shape (1, H, W) or (H, W), with integer instance labels.
+    normalize: Whether to normalize border distances per instance maximum.
+    edt_type: kept for API similarity with instance_wise_edt; not used for current implementation.
+
+    Returns
+    -------
+    border_vectors: Tensor of shape (2, H, W) containing (dy, dx) vectors to the closest border pixel.
+    border_distance: Tensor of shape (1, H, W) containing the Euclidean distance to the nearest border pixel.
+    """
+    if x.ndim == 2:
+        x = x.unsqueeze(0)
+
+    x = x.long()
+    if x.max() == 0:
+        h, w = x.shape[-2:]
+        return (
+            torch.zeros((2, h, w), dtype=torch.float32, device=x.device),
+            torch.zeros((1, h, w), dtype=torch.float32, device=x.device),
+        )
+
+    is_mps = x.is_mps
+    if is_mps:
+        x = x.to('cpu')
+
+    x_onehot = torch_onehot(x)[0]  # C x H x W
+    c, h, w = x_onehot.shape
+
+    border_vectors = torch.zeros((2, h, w), dtype=torch.float32, device=x.device)
+    border_distance = torch.zeros((1, h, w), dtype=torch.float32, device=x.device)
+
+    try:
+        from scipy.ndimage import distance_transform_edt, binary_erosion
+    except ImportError:
+        raise ImportError("scipy is required for nearest-border vector computation")
+
+    y_coords = np.arange(h).reshape(h, 1)
+    x_coords = np.arange(w).reshape(1, w)
+
+    for idx in range(c):
+        mask = x_onehot[idx].cpu().numpy().astype(bool)
+        if not mask.any():
+            continue
+
+        eroded = binary_erosion(mask.astype(np.uint8), structure=np.ones((3, 3)), border_value=0)
+        border_mask = mask & ~eroded
+        if not border_mask.any():
+            border_mask = mask
+
+        inv_border = (~border_mask).astype(np.uint8)
+        distance_map, indices = distance_transform_edt(inv_border, return_indices=True)
+        nearest_y = indices[0]
+        nearest_x = indices[1]
+
+        dy = (nearest_y - y_coords).astype(np.float32)
+        dx = (nearest_x - x_coords).astype(np.float32)
+
+        interior_pixels = mask
+        border_vectors[0, interior_pixels] = torch.from_numpy(dy[interior_pixels]).to(device=x.device)
+        border_vectors[1, interior_pixels] = torch.from_numpy(dx[interior_pixels]).to(device=x.device)
+        interior_distance = (distance_map[interior_pixels] + 1.0).astype(np.float32)
+        border_distance[0, interior_pixels] = torch.from_numpy(interior_distance).to(device=x.device)
+
+    if normalize:
+        for idx in range(c):
+            instance_mask = x_onehot[idx].bool()
+            if instance_mask.any():
+                max_dist = border_distance[0][instance_mask].max()
+                if max_dist > 0:
+                    border_distance[0][instance_mask] /= max_dist
+
+    if is_mps:
+        border_vectors = border_vectors.to('mps')
+        border_distance = border_distance.to('mps')
+
+    return border_vectors, border_distance
 
 
 def fast_dual_iou(onehot1: torch.Tensor, onehot2: torch.Tensor) -> torch.Tensor:

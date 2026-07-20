@@ -52,7 +52,47 @@ def build_monai_model(model_str: str, build_model_dictionary: dict):
 def read_model_args_from_csv(path=r"../results/", folder=""):
     import pandas as pd
     from pathlib import Path
+    import yaml
     model_path = Path(path) / folder
+    
+    # Check if config.yaml exists in the folder
+    config_yaml_path = model_path / "config.yaml"
+    if config_yaml_path.exists():
+        with open(config_yaml_path, 'r') as f:
+            cfg = yaml.safe_load(f)
+            
+        flat_cfg = {}
+        for section in cfg.values():
+            if isinstance(section, dict):
+                flat_cfg.update(section)
+                
+        build_model_dictionary = {}
+        build_model_dictionary["model_str"] = flat_cfg.get("model_name", "maskrcnn-resnet50_fpn")
+        build_model_dictionary["dim_in"] = flat_cfg.get("dim_in", 1)
+        build_model_dictionary["dim_out"] = flat_cfg.get("dim_out", 7)
+        build_model_dictionary["n_sigma"] = flat_cfg.get("n_sigma", 4)
+        build_model_dictionary["dim_coords"] = flat_cfg.get("dim_coords", 2)
+        build_model_dictionary["dropprob"] = flat_cfg.get("dropout", 0.0)
+        build_model_dictionary["layers"] = tuple(flat_cfg.get("layers", [32, 64, 128, 256]))
+        build_model_dictionary["pixel_size"] = flat_cfg.get("pixel_size", 0.5)
+        build_model_dictionary["cells_and_nuclei"] = flat_cfg.get("cells_and_nuclei", False)
+        build_model_dictionary["norm"] = flat_cfg.get("norm", "BATCH")
+        build_model_dictionary["feature_engineering"] = flat_cfg.get("feature_engineering", "0")
+        build_model_dictionary["adaptor_net_str"] = flat_cfg.get("adaptor_net_str", "1")
+        build_model_dictionary["multihead"] = flat_cfg.get("multihead", True)
+        build_model_dictionary["channel_invariant"] = flat_cfg.get("channel_invariant", False)
+        build_model_dictionary["to_centre"] = flat_cfg.get("to_centre", False)
+        build_model_dictionary["mlp_width"] = flat_cfg.get("mlp_width", 5)
+        build_model_dictionary["loss_function"] = flat_cfg.get("loss_function", "instanseg_loss")
+        build_model_dictionary["binary_loss_fn"] = flat_cfg.get("binary_loss_fn", "lovasz_hinge")
+        build_model_dictionary["seed_loss_fn"] = flat_cfg.get("seed_loss_fn", "l1_distance")
+        build_model_dictionary["target_segmentation"] = flat_cfg.get("target_segmentation", "C")
+        build_model_dictionary["source_dataset"] = flat_cfg.get("source_dataset", "all")
+        build_model_dictionary["num_classes"] = flat_cfg.get("num_classes", 2)
+        build_model_dictionary["imgsz"] = flat_cfg.get("imgsz", 512)
+        
+        return build_model_dictionary
+
     df = pd.read_csv(model_path / "experiment_log.csv", header=None)
     build_model_dictionary = dict(zip(list(df[0]), list(df[1])))
 
@@ -97,52 +137,91 @@ def read_model_args_from_csv(path=r"../results/", folder=""):
 
 
 def build_model_from_dict(build_model_dictionary):
-    if build_model_dictionary["dim_in"] == 0 or build_model_dictionary["dim_in"] is None:
+    model_str = build_model_dictionary.get("model_str", build_model_dictionary.get("model_name", "InstanSeg_UNet"))
+    
+    if model_str == 'maskrcnn-resnet50_fpn':
+        from torchvision.models.detection import maskrcnn_resnet50_fpn
+        num_classes = build_model_dictionary.get("num_classes", 2)
+        imgsz = build_model_dictionary.get("imgsz", 512)
+        model = maskrcnn_resnet50_fpn(
+            num_classes=num_classes,
+            weights=None,
+            weights_backbone=None,
+            min_size=imgsz,
+            max_size=imgsz,
+        )
+        return model
+
+    dim_in_value = build_model_dictionary.get("dim_in", 3)
+    if dim_in_value == 0 or dim_in_value is None:
         dim_in = 3  # Channel invariance currently outputs a 3 channel image
     else:
-        dim_in = build_model_dictionary["dim_in"]
+        dim_in = dim_in_value
 
     if "dropprob" not in build_model_dictionary.keys():
         build_model_dictionary["dropprob"] = 0.0
 
-    if build_model_dictionary["model_str"] == "InstanSeg_UNet":
-            from instanseg.utils.models.InstanSeg_UNet import InstanSeg_UNet
-            print("Generating InstanSeg_UNet")
-            multihead = build_model_dictionary["multihead"]
+    supported_unets = {
+        "instanseg_unet",
+        "efficientunetb0",
+        "efficientunetb1",
+        "efficientunetb2",
+        "efficientunetb3",
+        "efficientunetv2s",
+        "mobileunetv2",
+        "mobileunetv3s",
+        "mobileunetv3l",
+        "regnetunety400mf",
+        "regnetunety800mf",
+        "resnetunet18",
+    }
 
-            if build_model_dictionary["cells_and_nuclei"]:
+    if model_str == "InstanSeg_UNet" or model_str.lower() in supported_unets:
+            from instanseg.utils.models.InstanSeg_UNet import UNet
+            model_type = "instanseg_unet" if model_str == "InstanSeg_UNet" else model_str.lower()
+            print(f"Generating UNet: {model_type}")
+
+            multihead = bool(build_model_dictionary.get("multihead", False))
+            cells_and_nuclei = bool(build_model_dictionary.get("cells_and_nuclei", False))
+            dim_coords = int(build_model_dictionary.get("dim_coords", 2))
+            n_sigma = int(build_model_dictionary.get("n_sigma", 4))
+            layers = [int(x) for x in list(np.array(build_model_dictionary.get("layers", [32, 64, 128, 256]))[::-1])]
+            norm = build_model_dictionary.get("norm", "BATCH")
+            dropprob = float(build_model_dictionary.get("dropprob", 0.0))
+
+            if cells_and_nuclei:
                 if not multihead:
                     from itertools import chain
-                    out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],1] for i in range(2)]
+                    out_channels = [[dim_coords, n_sigma, 1] for _ in range(2)]
                     out_channels = list(chain(*out_channels))
-                
                 else:
-                    out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],1] for i in range(2)]
-
+                    out_channels = [[dim_coords, n_sigma, 1] for _ in range(2)]
             else:
                 if not multihead:
-                    out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],1]]
+                    out_channels = [[dim_coords, n_sigma, 1]]
                 else:
-                    out_channels = [[build_model_dictionary["dim_coords"]], [build_model_dictionary["n_sigma"]],[1]]
+                    out_channels = [[dim_coords], [n_sigma], [1]]
 
-            model = InstanSeg_UNet(in_channels=dim_in, 
-                            layers = np.array(build_model_dictionary["layers"])[::-1],
-                            out_channels=out_channels,
-                            norm  = build_model_dictionary["norm"], 
-                            dropout=build_model_dictionary["dropprob"])
-            
+            model = UNet(
+                model_type=model_type,
+                in_channels=dim_in,
+                layers=layers,
+                out_channels=out_channels,
+                norm=norm,
+                dropout=dropprob,
+                peft=build_model_dictionary.get("peft"),
+                r=build_model_dictionary.get("r", 4),
+                lora_alpha=build_model_dictionary.get("lora_alpha"),
+                lora_dropout=build_model_dictionary.get("lora_dropout", 0.0),
+                bias=build_model_dictionary.get("bias", "lora-only"),
+            )
     else:
-        model = build_monai_model(build_model_dictionary["model_str"], build_model_dictionary)
+        model = build_monai_model(model_str, build_model_dictionary)
 
     return model
 
 
 def remove_module_prefix_from_dict(dictionary):
-    """
-    Removes the module prefix from a dictionary of model weights
-    :param dictionary: dictionary of model weights
-    :return: modified dictionary
-    """
     modified_dict = {}
     for key, value in dictionary.items():
         if key.startswith('module.'):
@@ -173,17 +252,27 @@ def load_model_weights(model, device, folder, path=r"../models/", dict = None):
     import torch
     from pathlib import Path
     model_path = Path(path) / folder
-    if torch.cuda.is_available():
-        model_dict = torch.load(model_path / "model_weights.pth", weights_only= False)
-    else:
-        if device is None:
-            if torch.backends.mps.is_available():
-                device = 'mps'
-                print('CUDA not available - attempting to load MPS model')
+    
+    # Try multiple possible file names for model weights
+    weight_files = ["model_weights.pth", "checkpoints/best.pt", "checkpoints/last.pt"]
+    model_dict = None
+    
+    for f_name in weight_files:
+        p = model_path / f_name
+        if p.exists():
+            if torch.cuda.is_available():
+                model_dict = torch.load(p, weights_only=False)
             else:
-                device = 'cpu'
-                print('CUDA not available - attempting to load CPU model')
-        model_dict = torch.load(model_path / "model_weights.pth", map_location=device)
+                if device is None:
+                    if torch.backends.mps.is_available():
+                        device = 'mps'
+                    else:
+                        device = 'cpu'
+                model_dict = torch.load(p, map_location=device, weights_only=False)
+            break
+            
+    if model_dict is None:
+        raise FileNotFoundError(f"Could not find model weights in {model_path}")
 
     model_dict['model_state_dict'] = remove_module_prefix_from_dict(model_dict['model_state_dict'])
 
@@ -197,9 +286,6 @@ def load_model_weights(model, device, folder, path=r"../models/", dict = None):
     if has_adaptor_net_state_dict(model_dict['model_state_dict']) and not has_AdaptorNet(model):
         from instanseg.utils.models.ChannelInvariantNet import AdaptorNetWrapper, has_AdaptorNet
         model = AdaptorNetWrapper(model, norm = dict["norm"],adaptor_net_str = dict["adaptor_net_str"])
-
-    #from instanseg.utils.AI_utils import set_running_stats
-    #set_running_stats(model,device = "cuda")
 
     model.load_state_dict(model_dict['model_state_dict'], strict=True)
     model.to(device)

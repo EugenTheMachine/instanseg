@@ -10,7 +10,7 @@ authors = [
 ]
 description = "Package for instanseg-torch PyPi"
 readme = "README.md"
-requires-python = ">=3.9, <3.12"
+requires-python = ">=3.9, <3.13"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache Software License",
@@ -34,7 +34,10 @@ dependencies = [
     "tifffile>=2023.12.9",
     "tiffslide>=2.4.0",
     "torch>=2.1.1",
-    "tqdm>=4.66.1"
+    "tqdm>=4.66.1",
+    "ultralytics>=8.0.0",
+    "kaggle>=1.6.17",
+    "kagglehub>=0.3.0"
 ]
 
 
@@ -47,6 +50,12 @@ test = [
     "pytest~=8.2.2",
     "coverage~=7.6.5",
     "genbadge~=1.1.1"
+]
+dev = [
+    "black>=23.1.0",
+    "ruff>=0.0.280",
+    "isort>=5.12.0",
+    "mypy>=1.10.0"
 ]
 full = [
     "bioimageio.core~=0.5.11",
@@ -86,6 +95,23 @@ full = [
 [tool.hatch.build]
 include = ["instanseg/**"]
 exclude = ["notebooks/**", "instanseg/examples/*", "assets/**"]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+
+[tool.isort]
+profile = 'black'
+
+[tool.ruff]
+line-length = 88
+select = ['E', 'F', 'I', 'N', 'Q', 'R', 'S', 'U', 'W']
+ignore = ['E501']
+
+[tool.mypy]
+python_version = 3.9
+ignore_missing_imports = true
+warn_unused_configs = true
 
 [project.urls]
 Homepage = "https://github.com/instanseg/instanseg"

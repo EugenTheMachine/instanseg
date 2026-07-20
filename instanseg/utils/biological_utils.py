@@ -1,3 +1,27 @@
+"""
+biological_utils.py
+-------------------
+Utilities for nucleus/cell relationship analysis (IoU, N/C ratio, etc.).
+
+.. deprecated::
+    This entire module is deprecated as of v2.0.0.  InstanSeg now performs
+    **cell segmentation only** — all nucleus-based analysis (IoU, N/C ratio,
+    multinucleated cell detection, marker-subcellular-location queries, UMAP
+    clustering, etc.) has been removed from the active pipeline.
+
+    If you still need these utilities, pin your dependency to the v1.x series
+    of instanseg-torch.
+"""
+
+import warnings as _warnings
+_warnings.warn(
+    "instanseg.utils.biological_utils is deprecated and will be removed in a "
+    "future release.  InstanSeg now performs cell segmentation only; "
+    "nucleus-based analysis utilities are no longer part of the active pipeline.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 from typing import Tuple, Any
 
 import torch

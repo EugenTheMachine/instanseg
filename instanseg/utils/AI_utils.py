@@ -260,10 +260,8 @@ class Segmentation_Dataset(Dataset):
         data, label = self._read_pair(i)
 
         if self.common_transforms:
-            if isinstance(data, np.ndarray) and data.ndim == 3 and data.shape[2] in (1, 2, 3, 4):
-                data = np.transpose(data, (2, 0, 1))  # HWC -> CHW after load
-            if isinstance(label, np.ndarray) and label.ndim == 3:
-                label = label[0]
+            # albumentations expects HWC for image, HW for mask
+            # Do NOT transpose to CHW before passing to albumentations
             if self.augmentation_seed is not None:
                 self.transform.set_random_seed(int(self.augmentation_seed) + int(i))
             transformed = self.transform(image=data, mask=label)

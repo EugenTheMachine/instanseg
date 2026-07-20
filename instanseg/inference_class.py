@@ -4,8 +4,9 @@ import torch
 from torch import nn
 from torch.nn.functional import interpolate
 from pathlib import Path, PosixPath
-from tiffslide import TiffSlide
-import zarr
+# tiffslide and zarr are imported lazily where needed to avoid
+# ImportError in environments where they are not installed
+# (e.g. Kaggle training kernels that only need InstanSegModel).
 import os
 
 
@@ -232,6 +233,7 @@ class InstanSeg():
         :param image_str: The path to the image.
         """
         if self.prefered_image_reader == "tiffslide":
+            from tiffslide import TiffSlide
             slide = TiffSlide(image_str)
         # elif self.prefered_image_reader == "AICSImageIO":
         #     from aicsimageio import AICSImage
@@ -662,6 +664,7 @@ class InstanSeg():
             chop_list = _chops(dims, shape, overlap=2*pad2)
 
             chunk_shape = (n_dim,shape[0],shape[1])
+            import zarr
             store = zarr.DirectoryStore(file_with_zarr_extension) 
             canvas = zarr.zeros((n_dim,dims[0],dims[1]), chunks=chunk_shape, dtype=np.int32, store=store, overwrite = True)
 

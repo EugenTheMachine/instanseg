@@ -501,7 +501,7 @@ class InstanSeg(nn.Module):
     def postprocessing(self, prediction: Union[torch.Tensor, np.ndarray],
                         mask_threshold: float = 0.53,
                         peak_distance: int = 5,
-                        seed_threshold: float = 0.8,
+                        seed_threshold: float = 0.5,  # LOWERED from 0.8
                         overlap_threshold: float = 0.3,
                         mean_threshold: float = 0.1,
                         window_size: int = 128,

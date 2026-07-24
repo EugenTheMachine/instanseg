@@ -6,6 +6,7 @@ instanseg/examples/*
 !instanseg/examples/Fluorescence_example.tif
 instanseg/tensorboard_logs/
 logs/
+instanseg_original_codebase/
 instanseg/scripts/experiment.sh
 instanseg/torchscripts/
 instanseg/bioimageio_models/*

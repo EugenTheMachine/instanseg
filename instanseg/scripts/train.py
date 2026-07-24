@@ -820,7 +820,21 @@ def train_model(config_path=None, overrides=None, checkpoint_path=None, embeddin
                         loss = loss_fn(output, labels_batch).mean()
                         val_loss_sum += loss.item() * len(image_batch)
                         
-                        predicted_labels = torch.stack([postprocessing_fn(out) for out in output])
+                        # Extract postprocessing parameters from config with defaults
+                        postproc_params = {
+                            'mask_threshold': flat.get('mask_threshold', 0.53),
+                            'seed_threshold': flat.get('seed_threshold', 0.5),
+                            'peak_distance': int(flat.get('peak_distance', 5)),
+                            'overlap_threshold': flat.get('overlap_threshold', 0.3),
+                            'mean_threshold': flat.get('mean_threshold', 0.1),
+                            'min_size': int(flat.get('min_size', 10)),
+                        }
+                        
+                        # Apply parameters during validation postprocessing
+                        predicted_labels = torch.stack([
+                            postprocessing_fn(out, **postproc_params) 
+                            for out in output
+                        ])
                         for i in range(len(image_batch)):
                             pred_lbl = predicted_labels[i].cpu().numpy()
                             gt_lbl = labels_batch[i].cpu().numpy().squeeze()
@@ -942,7 +956,20 @@ def train_model(config_path=None, overrides=None, checkpoint_path=None, embeddin
                 loss = loss_fn(output, labels_batch).mean()
                 test_loss_sum += loss.item() * len(image_batch)
                 
-                predicted_labels = torch.stack([postprocessing_fn(out) for out in output])
+                # Extract postprocessing parameters from config with defaults
+                postproc_params = {
+                    'mask_threshold': flat.get('mask_threshold', 0.53),
+                    'seed_threshold': flat.get('seed_threshold', 0.5),
+                    'peak_distance': int(flat.get('peak_distance', 5)),
+                    'overlap_threshold': flat.get('overlap_threshold', 0.3),
+                    'mean_threshold': flat.get('mean_threshold', 0.1),
+                    'min_size': int(flat.get('min_size', 10)),
+                }
+                
+                predicted_labels = torch.stack([
+                    postprocessing_fn(out, **postproc_params)
+                    for out in output
+                ])
                 for i in range(len(image_batch)):
                     pred_lbl = predicted_labels[i].cpu().numpy()
                     gt_lbl = labels_batch[i].cpu().numpy().squeeze()

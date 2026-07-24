@@ -648,7 +648,22 @@ class InstanSegModel:
                     loss_fn = self._loss_fn()
                     loss = loss_fn(output, labels).mean()
                     test_loss_sum += loss.item() * len(images)
-                    predicted = torch.stack([self.postprocessing_fn(out) for out in output])
+                    
+                    # Extract postprocessing parameters from kwargs with sensible defaults
+                    postproc_params = {
+                        'mask_threshold': kwargs.get('mask_threshold', 0.53),
+                        'seed_threshold': kwargs.get('seed_threshold', 0.5),  # Changed from 0.8
+                        'peak_distance': kwargs.get('peak_distance', 5),
+                        'overlap_threshold': kwargs.get('overlap_threshold', 0.3),
+                        'mean_threshold': kwargs.get('mean_threshold', 0.1),
+                        'min_size': kwargs.get('min_size', 10),
+                    }
+                    
+                    # Forward parameters to postprocessing function
+                    predicted = torch.stack([
+                        self.postprocessing_fn(out, **postproc_params) 
+                        for out in output
+                    ])
                     for i in range(len(images)):
                         all_pred.append(predicted[i].cpu().numpy())
                         all_gt.append(labels[i].cpu().numpy().squeeze())

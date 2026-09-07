@@ -184,7 +184,8 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
     # preparation stuff
     global device, method, iou_threshold, args, optimizer, scheduler
 
-    args = parser.parse_args()
+    # args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
     for key, value in kwargs.items():
         if hasattr(args, key):
             setattr(args, key, value)

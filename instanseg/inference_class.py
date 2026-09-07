@@ -4,9 +4,17 @@ import torch
 from torch import nn
 from torch.nn.functional import interpolate
 from pathlib import Path, PosixPath
-from tiffslide import TiffSlide
-import zarr
 import os
+
+try:
+    from tiffslide import TiffSlide
+except ImportError:  # pragma: no cover - optional runtime dependency
+    TiffSlide = None
+
+try:
+    import zarr
+except ImportError:  # pragma: no cover - optional runtime dependency
+    zarr = None
 
 
 def _to_ndim(x: torch.Tensor, n: int) -> torch.Tensor:
@@ -134,7 +142,8 @@ class InstanSeg():
         :return: The image array if it can be safely read (or the path to the image if it cannot) and the pixel size in microns.
         """
         if self.prefered_image_reader == "tiffslide":
-            from tiffslide import TiffSlide
+            if TiffSlide is None:
+                raise ModuleNotFoundError("tiffslide is required for the 'tiffslide' image reader. Install it with 'pip install tiffslide'.")
             slide = TiffSlide(image_str)
             img_pixel_size = slide.properties['tiffslide.mpp-x']
             width,height = slide.dimensions[0], slide.dimensions[1]
@@ -179,7 +188,8 @@ class InstanSeg():
         :return: The pixel size in microns.
         """
         try:
-            from tiffslide import TiffSlide
+            if TiffSlide is None:
+                raise ModuleNotFoundError("tiffslide is not installed")
             slide = TiffSlide(image_str)
             img_pixel_size = slide.properties['tiffslide.mpp-x']
             if img_pixel_size is not None and img_pixel_size > 0 and img_pixel_size < 2:
@@ -219,6 +229,8 @@ class InstanSeg():
         :param image_str: The path to the image.
         """
         if self.prefered_image_reader == "tiffslide":
+            if TiffSlide is None:
+                raise ModuleNotFoundError("tiffslide is required for whole-slide reading. Install it with 'pip install tiffslide'.")
             slide = TiffSlide(image_str)
         # elif self.prefered_image_reader == "AICSImageIO":
         #     from aicsimageio import AICSImage
@@ -608,6 +620,8 @@ class InstanSeg():
             
             chop_list = _chops(dims, shape, overlap=2*pad2)
 
+            if zarr is None:
+                raise ModuleNotFoundError("zarr is required for whole-slide export. Install it with 'pip install zarr'.")
             chunk_shape = (n_dim,shape[0],shape[1])
             store = zarr.DirectoryStore(file_with_zarr_extension) 
             canvas = zarr.zeros((n_dim,dims[0],dims[1]), chunks=chunk_shape, dtype=np.int32, store=store, overwrite = True)

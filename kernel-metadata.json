@@ -1,0 +1,16 @@
+{
+  "id": "eugenfromkharkov/instanseg-kaggle-training",
+  "title": "InstanSeg Kaggle Training",
+  "code_file": "training_kaggle.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "dataset_sources": [
+    "eugenfromkharkov/livecell-cellseg1-a172"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

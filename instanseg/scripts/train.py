@@ -227,8 +227,8 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
         print('RNG seed not set')
 
     if args.use_deterministic:
-        print('Setting use_deterministic_algorithms=True')
-        torch.use_deterministic_algorithms(True)
+        print('Setting use_deterministic_algorithms(True, warn_only=True)')
+        torch.use_deterministic_algorithms(True, warn_only=True)
 
     # preparing other important stuff (setting up model params, initting loss function etc.)
     args.layers = eval(args.layers)

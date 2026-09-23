@@ -61,6 +61,7 @@ def _load_default_config() -> Dict[str, Any]:
             "embedding_mode": "center-seed",
         },
         "optimizer": {
+            "type": "AdamW",
             "learning_rate": 0.001,
             "weight_decay": 0.0001,
             "momentum": 0.9,
@@ -157,6 +158,8 @@ class InstanSegModel:
             "weight_decay": ("optimizer", "weight_decay"),
             "momentum": ("optimizer", "momentum"),
             "backbone_lr_mult": ("optimizer", "backbone_lr_mult"),
+            "optimizer_type": ("optimizer", "type"),
+            "type": ("optimizer", "type"),
         }
         for k, v in kwargs.items():
             if v is None:
@@ -250,8 +253,11 @@ class InstanSegModel:
         setattr(args, "rng_seed", seed)
         setattr(args, "seed", seed)
         setattr(args, "tile_size", self.config["preprocessing"]["imgsz"])
-        setattr(args, "batch_size", self.config["training"]["batch_size"])
-        setattr(args, "num_workers", 0)  # Safe default for local/kaggle, loader handles workers
+        batch_size = int(self.config["training"]["batch_size"])
+        accumulation_steps = max(1, 4 // max(1, batch_size))
+        setattr(args, "batch_size", batch_size)
+        setattr(args, "accumulation_steps", accumulation_steps)
+        setattr(args, "num_workers", 0)
         setattr(args, "transform_intensity", 0.5)
         setattr(args, "requested_pixel_size", None)
         setattr(args, "mean_object_diameter", None)
@@ -290,15 +296,18 @@ class InstanSegModel:
 
         self.model.to(self.device)
 
-
-
         def loss_fn(*args_fn, **kwargs_fn):
             return instanseg_loss_instance.forward(*args_fn, **kwargs_fn)
 
         lr = float(self.config["optimizer"]["learning_rate"])
         weight_decay = float(self.config["optimizer"]["weight_decay"])
-        momentum = float(self.config["optimizer"]["momentum"])
-        optimizer = torch.optim.SGD(self.model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
+        optimizer_type = str(self.config["optimizer"].get("type", "AdamW"))
+
+        if optimizer_type.lower() == "sgd":
+            momentum = float(self.config["optimizer"].get("momentum", 0.9))
+            optimizer = torch.optim.SGD(self.model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
+        else:
+            optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=weight_decay)
 
         start_epoch = 1
         best_val_loss = float("inf")
@@ -334,8 +343,18 @@ class InstanSegModel:
         total_epochs = int(self.config["training"]["epochs"])
         patience_limit = int(self.config["training"]["patience"])
         val_interval = int(self.config["training"]["val_interval"])
+        warmup_epochs = int(self.config["training"].get("warmup_epochs", 2))
 
         for epoch in range(start_epoch, total_epochs + 1):
+            if warmup_epochs > 0 and epoch <= warmup_epochs:
+                current_lr = lr * (epoch / float(warmup_epochs))
+                for param_group in optimizer.param_groups:
+                    param_group["lr"] = current_lr
+                logger.info(f"Warmup Epoch {epoch}/{warmup_epochs}: Learning rate set to {current_lr:.6f}")
+            elif warmup_epochs > 0 and epoch == warmup_epochs + 1:
+                for param_group in optimizer.param_groups:
+                    param_group["lr"] = lr
+
             logger.info(f"EPOCH {epoch}/{total_epochs}")
 
             # Train single epoch

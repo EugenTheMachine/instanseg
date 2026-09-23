@@ -25,18 +25,28 @@ def train_epoch(train_model,
     start = time.time()
     train_model.train()
     train_loss = []
-    for image_batch, labels_batch, _ in tqdm(train_dataloader, disable=args.on_cluster):
+
+    accumulation_steps = getattr(args, "accumulation_steps", 1)
+    if accumulation_steps < 1:
+        accumulation_steps = 1
+
+    train_optimizer.zero_grad()
+
+    for i, (image_batch, labels_batch, _) in enumerate(tqdm(train_dataloader, disable=args.on_cluster)):
 
         image_batch = image_batch.to(train_device)
         labels = labels_batch.to(train_device)
         output = train_model(image_batch)
         loss = train_loss_fn(output, labels.clone()).mean()
-        train_optimizer.zero_grad()
-        loss.backward()
 
-        torch.nn.utils.clip_grad_norm_(train_model.parameters(), args.clip)
+        scaled_loss = loss / accumulation_steps
+        scaled_loss.backward()
 
-        train_optimizer.step()
+        if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_dataloader):
+            torch.nn.utils.clip_grad_norm_(train_model.parameters(), args.clip)
+            train_optimizer.step()
+            train_optimizer.zero_grad()
+
         train_loss.append(loss.detach().cpu().numpy())
 
     end = time.time()

@@ -25,6 +25,7 @@ model:
   embedding_mode: "center-seed"
 
 optimizer:
+  type: "AdamW"
   learning_rate: 0.001
   weight_decay: 0.0001
   momentum: 0.9

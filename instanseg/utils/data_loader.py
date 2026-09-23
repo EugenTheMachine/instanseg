@@ -289,6 +289,16 @@ def read_directory_dataset(
 
     data_dir = Path(data_dir)
 
+    while data_dir.name.lower() in ["train", "val", "test", "images", "labels", "masks"]:
+        parent = data_dir.parent
+        if parent == data_dir:
+            break
+        subdirs = [x.name.lower() for x in parent.iterdir() if x.is_dir()]
+        if any(s in subdirs for s in ["train", "val", "test", "images", "labels", "masks"]):
+            data_dir = parent
+        else:
+            break
+
     def _read_img(p):
         p_str = str(p)
         if p_str.lower().endswith((".tif", ".tiff")):
@@ -309,6 +319,8 @@ def read_directory_dataset(
     def _load_set(folder_path):
         images_dir = folder_path / "images"
         masks_dir = folder_path / "masks"
+        if not masks_dir.exists():
+            masks_dir = folder_path / "labels"
 
         if not images_dir.exists() or not masks_dir.exists():
             return [], [], []

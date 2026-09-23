@@ -314,6 +314,8 @@ class InstanSegModel:
                 ckp_file = checkpoints_dir / "last.pt"
             elif (exp_dir / "last.pt").exists():
                 ckp_file = exp_dir / "last.pt"
+            elif self.checkpoint_path and self.checkpoint_path.exists():
+                ckp_file = self.checkpoint_path
 
             if ckp_file and ckp_file.exists():
                 ckp = load_checkpoint(ckp_file, self.model, optimizer=optimizer, device=self.device)

@@ -252,3 +252,43 @@ def compute_and_export_metrics(gt_masks, pred_masks, output_path, target, return
     if output_path is not None:
 
         df.to_csv(output_path / str(target + "_matching_metrics.csv"))
+
+
+def compute_dataset_metrics(y_true, y_pred, thresholds=None):
+    """
+    Computes dataset-level precision, recall, accuracy (tp / (tp+fp+fn)), and f1.
+    """
+    if thresholds is None:
+        thresholds = [0.5]
+    if isinstance(thresholds, (float, int)):
+        thresholds = [float(thresholds)]
+
+    # Filter tensor types and ensure numpy/torch compatibility
+    y_true_clean = []
+    y_pred_clean = []
+    for t, p in zip(y_true, y_pred):
+        if torch.is_tensor(t):
+            t = t.detach().cpu().numpy()
+        if torch.is_tensor(p):
+            p = p.detach().cpu().numpy()
+        t = np.squeeze(t).astype(np.int32)
+        p = np.squeeze(p).astype(np.int32)
+        y_true_clean.append(t)
+        y_pred_clean.append(p)
+
+    if len(y_true_clean) == 0:
+        return {"precision": 0.0, "recall": 0.0, "accuracy": 0.0, "f1": 0.0}
+
+    stats = matching_dataset_torch(y_true_clean, y_pred_clean, thresh=thresholds, by_image=False)
+    stat = stats[0]
+
+    return {
+        "precision": float(stat.precision),
+        "recall": float(stat.recall),
+        "accuracy": float(stat.accuracy),
+        "f1": float(stat.f1),
+        "tp": int(stat.tp),
+        "fp": int(stat.fp),
+        "fn": int(stat.fn),
+    }
+

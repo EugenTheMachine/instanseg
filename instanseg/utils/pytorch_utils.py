@@ -219,13 +219,18 @@ def instance_wise_edt(x: torch.Tensor, edt_type: str = 'auto') -> torch.Tensor:
 
     use_edt = edt_type == 'edt' or (edt_type != 'monai' and not x.is_cuda)
     if use_edt:
-        import edt
-        xedt = torch.from_numpy(edt.edt(x[0].cpu().numpy(), black_border=False))
+        try:
+            import edt
+            xedt = torch.from_numpy(edt.edt(x[0].cpu().numpy(), black_border=False))
+        except ImportError:
+            from scipy.ndimage import distance_transform_edt
+            xedt = torch.from_numpy(distance_transform_edt(x[0].cpu().numpy()))
         x = torch_onehot(x)[0] * xedt.to(x.device)
     else:
         import monai
         x = torch_onehot(x)
         x = monai.transforms.utils.distance_transform_edt(x[0])
+
 
     # Normalize instance distances to have max 1
     x = x / (x.flatten(1).max(1)[0]).view(-1, 1, 1)

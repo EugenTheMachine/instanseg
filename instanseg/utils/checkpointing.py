@@ -33,6 +33,7 @@ def load_checkpoint(
     optimizer: Optional[torch.optim.Optimizer] = None,
     scheduler: Optional[Any] = None,
     device: Optional[torch.device] = None,
+    strict: bool = True,
 ) -> Dict[str, Any]:
     """Loads model checkpoint and restores weights, optimizer, and scheduler states."""
     checkpoint_path = Path(checkpoint_path)
@@ -44,14 +45,13 @@ def load_checkpoint(
     except TypeError:
         checkpoint = torch.load(checkpoint_path, map_location=device or "cpu")
 
-
     if "model_state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["model_state_dict"])
+        model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
     elif isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["state_dict"])
+        model.load_state_dict(checkpoint["state_dict"], strict=strict)
     else:
         # Fallback if raw state dict saved
-        model.load_state_dict(checkpoint)
+        model.load_state_dict(checkpoint, strict=strict)
 
     if optimizer is not None and "optimizer_state_dict" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])

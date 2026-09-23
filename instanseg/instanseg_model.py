@@ -186,6 +186,20 @@ class InstanSegModel:
         """Initializes model architecture and loads weights from checkpoint."""
         flat_cfg = _flatten_config(self.config)
         self.model = build_model_from_dict(flat_cfg, random_seed=flat_cfg.get("seed", 42))
+        instanseg_loss_instance = InstanSegLoss(
+            binary_loss_fn_str="lovasz_hinge",
+            seed_loss_fn="l1_distance",
+            device=self.device,
+            n_sigma=flat_cfg.get("n_sigma", 2),
+            cells_and_nuclei=flat_cfg.get("cells_and_nuclei", False),
+            window_size=flat_cfg.get("window_size", 128),
+            dim_coords=flat_cfg.get("dim_coords", 2),
+            dim_seeds=flat_cfg.get("dim_seeds", 1),
+            bg_weight=None,
+        )
+        self.model = instanseg_loss_instance.initialize_pixel_classifier(
+            self.model, MLP_width=flat_cfg.get("mlp_width", 5)
+        )
         load_checkpoint(ckp_path, self.model, device=self.device)
         self.model.to(self.device)
 

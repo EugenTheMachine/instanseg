@@ -7,6 +7,7 @@
 
 - [x] Completed `ENGINEERING MODIFICATIONS` *(everything should be tested by now, the mini-dataset works well in Kaggle remote runtime)*;
 - [x] Completed `TRAIN MODIFICATIONS` *(everything should be tested by now, the mini-dataset works well in Kaggle remote runtime)*;
+- [x] obtained meaningful quality metrics after 20 epochs on a proper 1-cell-line dataset (accuracy up to 0.4980, F1-score up to 0.66) - now gotta tune params even better for faster and better converence;
 
 <p align="center">
   <a href="https://pypi.org/project/instanseg-torch/">

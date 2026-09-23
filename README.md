@@ -3,6 +3,11 @@
   <img src="https://github.com/ThibautGoldsborough/instanseg_thibaut/blob/main/assets/instanseg_logo.png?raw=True" alt="Instanseg Logo" width="25%">
 </p>
 
+## TODOs
+
+- [x] Completed `ENGINEERING MODIFICATIONS` *(everything should be tested by now, the mini-dataset works well in Kaggle remote runtime)*;
+- [x] Completed `TRAIN MODIFICATIONS` *(everything should be tested by now, the mini-dataset works well in Kaggle remote runtime)*;
+
 <p align="center">
   <a href="https://pypi.org/project/instanseg-torch/">
     <img src="https://img.shields.io/pypi/v/instanseg-torch?color=blue&label=PyPI" alt="PyPI version">
@@ -61,21 +66,20 @@ If you use InstanSeg for nucleus and/or cell segmentation in fluorescence images
 
 ## Table of Contents
 
+- [TODOs](#todos)
 - [Overview](#overview)
 - [Why should I use InstanSeg?](#why-should-i-use-instanseg)
 - [InstanSeg has its own QuPath extension!](#instanseg-has-its-own-qupath-extension)
 - [How to cite InstanSeg:](#how-to-cite-instanseg)
 - [Table of Contents](#table-of-contents)
 - [Installing using pip](#installing-using-pip)
-  - [Local Installation](#local-installation)
-  - [GPU Version (CUDA) for Windows and Linux](#gpu-version-cuda-for-windows-and-linux)
-  - [Setup Repository](#setup-repository)
+  - [Setup Repository (for training or development)](#setup-repository-for-training-or-development)
 - [Usage](#usage)
   - [Download Datasets](#download-datasets)
   - [Training Models](#training-models)
   - [Testing Models](#testing-models)
   - [Using InstanSeg for inference](#using-instanseg-for-inference)
-  - [Model versioning](#model-versioning)
+  - [Model versioning (Ignore)](#model-versioning-ignore)
 
 
 ## Installing using pip

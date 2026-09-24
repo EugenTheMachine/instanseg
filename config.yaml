@@ -9,12 +9,12 @@ preprocessing:
 
 training:
   epochs: 10
-  patience: 5
+  patience: 8
   batch_size: 4
   val_ratio: 0.2
   test_ratio: 0.2
   val_interval: 1
-  warmup_epochs: 3
+  warmup_epochs: 4
   resume: false
 
 model:
@@ -26,7 +26,7 @@ model:
 
 optimizer:
   type: "AdamW"
-  learning_rate: 0.0003
+  learning_rate: 0.001
   weight_decay: 0.0001
   momentum: 0.9
-  backbone_lr_mult: 1.0
+  backbone_lr_mult: 3.0

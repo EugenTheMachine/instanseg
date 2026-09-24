@@ -8,7 +8,7 @@ preprocessing:
   seed: 42
 
 training:
-  epochs: 25
+  epochs: 10
   patience: 5
   batch_size: 4
   val_ratio: 0.2
@@ -18,7 +18,7 @@ training:
   resume: false
 
 model:
-  model_name: "InstanSeg_UNet"
+  model_name: "EfficientUNetB0"
   num_classes: 2
   freeze_backbone_epochs: 0
   dropout: 0.0

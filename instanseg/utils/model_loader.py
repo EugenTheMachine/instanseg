@@ -118,41 +118,32 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
     if "dropprob" not in build_model_dictionary.keys():
         build_model_dictionary["dropprob"] = 0.0
 
-    supported_unet_types = [
-        "instanseg_unet", "efficientunetb0", "efficientunetb1", "efficientunetb2",
-        "efficientunetb3", "efficientunetv2s", "mobileunetv2", "mobileunetv3s",
-        "mobileunetv3l", "regnetunety400mf", "regnetunety800mf", "resnetunet18"
-    ]
-    model_str_val = (build_model_dictionary.get("model_str") or build_model_dictionary.get("model_name") or "instanseg_unet").lower()
+    if build_model_dictionary["model_str"].lower() == "instanseg_unet":
+            from instanseg.utils.models.InstanSeg_UNet import InstanSeg_UNet
+            print("Generating InstanSeg_UNet")
+            multihead = build_model_dictionary["multihead"]
 
-    if model_str_val in supported_unet_types:
-            from instanseg.utils.models.UNet import UNet
-            print(f"Generating UNet ({model_str_val})")
-            multihead = build_model_dictionary.get("multihead", False)
-
-            if build_model_dictionary.get("cells_and_nuclei", False):
-                n_seeds = build_model_dictionary.get("dim_seeds", 1)
+            if build_model_dictionary["cells_and_nuclei"]:
+                n_seeds = build_model_dictionary["dim_seeds"]
                 if not multihead:
                     from itertools import chain
-                    out_channels = [[build_model_dictionary.get("dim_coords", 2), build_model_dictionary.get("n_sigma", 2), n_seeds] for i in range(2)]
+                    out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],n_seeds] for i in range(2)]
                     out_channels = list(chain(*out_channels))
+                
                 else:
-                    out_channels = [[build_model_dictionary.get("dim_coords", 2), build_model_dictionary.get("n_sigma", 2), n_seeds] for i in range(2)]
+                    out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],n_seeds] for i in range(2)]
             else:
-                n_seeds = build_model_dictionary.get("dim_seeds", 1)
+                n_seeds = build_model_dictionary["dim_seeds"]
                 if not multihead:
-                    out_channels = [[build_model_dictionary.get("dim_coords", 2), build_model_dictionary.get("n_sigma", 2), n_seeds]]
+                    out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],n_seeds]]
                 else:
-                    out_channels = [[build_model_dictionary.get("dim_coords", 2)], [build_model_dictionary.get("n_sigma", 2)], [n_seeds]]
+                    out_channels = [[build_model_dictionary["dim_coords"]], [build_model_dictionary["n_sigma"]],[n_seeds]]
 
-            model = UNet(
-                model_type=model_str_val,
-                in_channels=dim_in, 
-                layers=np.array(build_model_dictionary.get("layers", (32, 64, 128, 256)))[::-1],
-                out_channels=out_channels,
-                norm=build_model_dictionary.get("norm", "BATCH"), 
-                dropout=build_model_dictionary.get("dropprob", 0.0)
-            )
+            model = InstanSeg_UNet(in_channels=dim_in, 
+                            layers = np.array(build_model_dictionary["layers"])[::-1],
+                            out_channels=out_channels,
+                            norm  = build_model_dictionary["norm"], 
+                            dropout=build_model_dictionary["dropprob"])
             
 
     elif build_model_dictionary["model_str"].lower() == "cellposesam":

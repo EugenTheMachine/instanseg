@@ -8,7 +8,7 @@ preprocessing:
   seed: 42
 
 training:
-  epochs: 20
+  epochs: 25
   patience: 5
   batch_size: 4
   val_ratio: 0.2

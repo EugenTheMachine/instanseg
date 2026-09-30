@@ -22,7 +22,6 @@ if TYPE_CHECKING:
 from instanseg.utils.visualization import (
     apply_cmap,
     display_as_grid,
-    display_cells_and_nuclei,
     display_colourized,
     label_to_color_image,
     plot_average,
@@ -329,7 +328,6 @@ def export_to_torchscript(model_str: str, show_example: bool = False, output_dir
     model.eval()
     model.to(device)
 
-    cells_and_nuclei = model_dict['cells_and_nuclei']
     pixel_size = model_dict['pixel_size']
     n_sigma = model_dict['n_sigma']
 
@@ -351,8 +349,7 @@ def export_to_torchscript(model_str: str, show_example: bool = False, output_dir
         dim_in = 3
 
     from instanseg.utils.loss.instanseg_loss import InstanSeg_Torchscript
-    super_model = InstanSeg_Torchscript(model, cells_and_nuclei=cells_and_nuclei,
-                                        pixel_size=pixel_size,
+    super_model = InstanSeg_Torchscript(model, pixel_size=pixel_size,
                                         n_sigma=n_sigma,
                                         params=params,
                                         feature_engineering_function=str(model_dict["feature_engineering"]),

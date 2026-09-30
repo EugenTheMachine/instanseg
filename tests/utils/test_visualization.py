@@ -10,7 +10,6 @@ from instanseg.utils.visualization import (
     _to_scaled_uint8,
     _to_rgb_channels_last,
     save_image_with_label_overlay,
-    display_cells_and_nuclei,
 )
 
 
@@ -134,7 +133,6 @@ class TestSaveImageWithLabelOverlay:
                 im, lab, return_image=True, label_boundary_mode=mode
             )
             assert result is not None
-
     def test_color_options(self):
         im = np.random.rand(100, 100, 3).astype(np.uint8) * 255
         lab = np.zeros((100, 100), dtype=np.int32)
@@ -147,21 +145,7 @@ class TestSaveImageWithLabelOverlay:
             assert result is not None
 
 
-class TestDisplayCellsAndNuclei:
-    """Tests for display_cells_and_nuclei function"""
 
-    def test_single_channel_display(self):
-        lab = torch.zeros((1, 100, 100), dtype=torch.int32)
-        lab[0, 20:40, 20:40] = 1
-        
-        result = display_cells_and_nuclei(lab)
-        assert result.shape[:2] == (100, 100)
 
-    def test_two_channel_display(self):
-        lab = torch.zeros((2, 100, 100), dtype=torch.int32)
-        lab[0, 20:40, 20:40] = 1  # Nuclei
-        lab[1, 15:45, 15:45] = 1  # Cells
-        
-        result = display_cells_and_nuclei(lab)
-        assert result.shape[:2] == (100, 100)
+
 

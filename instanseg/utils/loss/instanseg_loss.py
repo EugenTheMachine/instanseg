@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import pdb
+import warnings
 
 from einops import rearrange
 from typing import Tuple, List, Union
@@ -648,7 +649,7 @@ class InstanSeg(nn.Module):
                  device: str = 'cuda', 
                  binary_loss_fn_str: str = "lovasz_hinge", 
                  seed_loss_fn = "binary_xloss", 
-                 cells_and_nuclei: bool = False, 
+                 cells_and_nuclei=None,
                  window_size = 256, 
                  feature_engineering_function = "0",
                  bg_weight = None,
@@ -666,9 +667,12 @@ class InstanSeg(nn.Module):
         self.dim_out = self.dim_coords + self.n_sigma + self.dim_seeds
         self.parameters_have_been_updated = False
 
-        if cells_and_nuclei:
-            self.dim_out = self.dim_out * 2
-        self.cells_and_nuclei = cells_and_nuclei
+        if cells_and_nuclei is not None:
+            warnings.warn(
+                "cells_and_nuclei is deprecated and ignored; only cell segmentation is supported.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.window_size = window_size
         self.num_instance_cap = 50
         self.bg_weight = bg_weight
@@ -806,20 +810,18 @@ class InstanSeg(nn.Module):
         xxyy = generate_coordinate_map(mode = "linear", spatial_dim = self.dim_coords, height = height, width = width, device = prediction.device)
 
         loss = 0
-  
-        if self.cells_and_nuclei:
-            dim_out = int(self.dim_out / 2)
-        else:
-            dim_out = self.dim_out
+
+        if instances.shape[1] > 1:
+            warnings.warn(
+                "Multiple label channels are deprecated; only the last (cell) channel will be used.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            instances = instances[:, -1:]
 
         for mask_channel in range(0, instances.shape[1]):
 
-            if mask_channel == 0:
-                prediction_b = prediction[:, 0: dim_out, :, :]
-            else:
-                prediction_b = prediction[:, dim_out:, :, :]
-
-            instances_batch = instances
+            prediction_b = prediction
 
             spatial_emb_batch = (torch.sigmoid((prediction_b[:, 0: self.dim_coords]))-0.5) * 8 + xxyy
 
@@ -836,7 +838,7 @@ class InstanSeg(nn.Module):
                 instance_loss = 0
                 seed_loss = 0
 
-                instance = instances_batch[b, mask_channel].unsqueeze(0)  # 1 x h x w
+                instance = instances[b, mask_channel].unsqueeze(0)  # 1 x h x w
 
                 if (instance < 0).all(): #-1 means not annotated
                     continue
@@ -914,9 +916,6 @@ class InstanSeg(nn.Module):
 
         loss = loss / (b + 1)
 
-        if self.cells_and_nuclei:
-            loss = loss / 2
-
         if type(loss) != torch.Tensor:
             loss = spatial_emb * 0
 
@@ -969,23 +968,16 @@ class InstanSeg(nn.Module):
         if isinstance(prediction, np.ndarray):
             prediction = torch.tensor(prediction, device=device)
 
-        if self.cells_and_nuclei:
-            iterations = 2
-            dim_out = int(self.dim_out / 2)
-        else:
-            iterations = 1
-            dim_out = self.dim_out
+        iterations = 1
+        dim_out = self.dim_out
 
         labels = []
 
-        for i in range(iterations):
+        for _ in range(iterations):
 
             if precomputed_crops is None:
 
-                if i == 0:
-                    prediction_i = prediction[0: dim_out, :, :]
-                else:
-                    prediction_i = prediction[dim_out:, :, :]
+                prediction_i = prediction[:dim_out, :, :]
 
                 height, width = prediction_i.size(1), prediction_i.size(2)
 
@@ -1081,10 +1073,7 @@ class InstanSeg(nn.Module):
             labels.append(label.squeeze())
 
 
-        if len(labels) == 1:
-            return labels[0][None]  # 1,H,W
-        else:
-            return torch.stack(labels)  # 2,H,W
+        return labels[0][None]  # 1,H,W
         
 
     def TTA_postprocessing(self, img, model, transforms,
@@ -1102,31 +1091,20 @@ class InstanSeg(nn.Module):
                        max_seeds: int = 2000,):
 
         
-        cells_and_nuclei = self.cells_and_nuclei
-        if self.cells_and_nuclei:
-            iterations = 2
-            assert self.dim_out % 2 == 0,  print("The model should an even number of output channels for cells and nuclei.")
-            dim_out = int(self.dim_out / 2)
-        else:
-            iterations = 1
-            dim_out = self.dim_out
-
         out_labels = []
 
         transforms = [t for t in transforms] + [IdentityTransform()]
         
-        for i in range(iterations):
+        for _ in range(1):
 
             all_masks_list = []
             all_predictions = []
-
-            self.cells_and_nuclei = False
 
             for t in transforms:
                 with torch.amp.autocast("cuda"):
                     augmented_image = t.augment_image(img)
                     augmented_image, pad = _instanseg_padding(augmented_image, extra_pad= 0, min_dim = 32)
-                    prediction = model(augmented_image)[:,i * dim_out:(i+1) * dim_out]
+                    prediction = model(augmented_image)
                     prediction = _recover_padding(prediction, pad)
                     mask_map = prediction[:,-1][None] 
                     mask_map = t.deaugment_mask(mask_map)
@@ -1190,8 +1168,6 @@ class InstanSeg(nn.Module):
                                         cleanup_fragments, max_seeds, precomputed_crops = (all_crops, coords, mask_map))
 
             out_labels.append(labels)
-        self.cells_and_nuclei = cells_and_nuclei
-
         labels = torch.stack(out_labels, dim = 1).squeeze(0)
         #show_images(labels)
         return labels
@@ -1204,11 +1180,10 @@ class IdentityTransform:
         return mask
 
         
-from instanseg.utils.biological_utils import resolve_cell_and_nucleus_boundaries
 from typing import Dict, Optional
 class InstanSeg_Torchscript(nn.Module):
     def __init__(self, model, 
-                 cells_and_nuclei: bool = False,
+                 cells_and_nuclei=None,
                  pixel_size : float = 0, 
                  n_sigma: int = 2, 
                  dim_coords:int = 2, 
@@ -1233,7 +1208,12 @@ class InstanSeg_Torchscript(nn.Module):
             self.pixel_classifier = model.pixel_classifier
         except:
             self.pixel_classifier = model.model.pixel_classifier
-        self.cells_and_nuclei = cells_and_nuclei
+        if cells_and_nuclei is not None:
+            warnings.warn(
+                "cells_and_nuclei is deprecated and ignored; only cell segmentation is supported.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.pixel_size = pixel_size
         self.dim_coords = dim_coords
         self.dim_seeds = dim_seeds
@@ -1242,7 +1222,12 @@ class InstanSeg_Torchscript(nn.Module):
         self.params = params or {}
         self.index_dtype = torch.long #torch.int
 
-        self.default_target_segmentation = self.params.get('target_segmentation', torch.tensor([1, 1]))
+        if "target_segmentation" in self.params:
+            warnings.warn(
+                "target_segmentation is deprecated and ignored; only cell segmentation is supported.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.default_min_size = self.params.get('min_size', 10)
         self.default_mask_threshold = self.params.get('mask_threshold', 0.53)
         self.default_peak_distance = int(self.params.get('peak_distance', 5))
@@ -1252,12 +1237,11 @@ class InstanSeg_Torchscript(nn.Module):
         self.default_fg_threshold = self.params.get('fg_threshold', 0.5)
         self.default_window_size = self.params.get('window_size',32) #32
         self.default_cleanup_fragments = self.params.get('cleanup_fragments', True)
-        self.default_resolve_cell_and_nucleus = self.params.get('resolve_cell_and_nucleus', True)
 
 
     def forward(self, x: torch.Tensor,
                 args: Optional[Dict[str, torch.Tensor]] = None,
-                target_segmentation: torch.Tensor = torch.tensor([1, 1]), # Nuclei / Cells
+                target_segmentation: Optional[torch.Tensor] = None,
                 min_size: Optional[int] = None,
                 mask_threshold: Optional[float] = None,
                 peak_distance: Optional[int] = None,
@@ -1280,12 +1264,28 @@ class InstanSeg_Torchscript(nn.Module):
         fg_threshold = float(fg_threshold) if fg_threshold is not None else self.default_fg_threshold
         window_size = int(window_size) if window_size is not None else self.default_window_size
         cleanup_fragments = bool(cleanup_fragments) if cleanup_fragments is not None else self.default_cleanup_fragments
-        resolve_cell_and_nucleus = bool(resolve_cell_and_nucleus) if resolve_cell_and_nucleus is not None else self.default_resolve_cell_and_nucleus
+        if target_segmentation is not None:
+            warnings.warn(
+                "target_segmentation is deprecated and ignored; only cell segmentation is supported.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if resolve_cell_and_nucleus is not None:
+            warnings.warn(
+                "resolve_cell_and_nucleus is deprecated and ignored; only cell segmentation is supported.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         if args is None:
             args = {"None": torch.tensor([0])}
 
-        target_segmentation = args.get('target_segmentation', target_segmentation)
+        if "target_segmentation" in args:
+            warnings.warn(
+                "target_segmentation is deprecated and ignored; only cell segmentation is supported.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         min_size = int(args.get('min_size', torch.tensor(float(min_size))).item())
         mask_threshold = args.get('mask_threshold', torch.tensor(mask_threshold)).item()
         peak_distance = args.get('peak_distance', torch.tensor(peak_distance)).item()
@@ -1295,7 +1295,12 @@ class InstanSeg_Torchscript(nn.Module):
         fg_threshold = args.get('fg_threshold', torch.tensor(fg_threshold)).item()
         window_size = int(args.get('window_size', torch.tensor(float(window_size))).item())
         cleanup_fragments = args.get('cleanup_fragments', torch.tensor(cleanup_fragments)).item()
-        resolve_cell_and_nucleus = args.get('resolve_cell_and_nucleus', torch.tensor(resolve_cell_and_nucleus)).item()
+        if "resolve_cell_and_nucleus" in args:
+            warnings.warn(
+                "resolve_cell_and_nucleus is deprecated and ignored; only cell segmentation is supported.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         precomputed_seeds = args.get('precomputed_seeds', precomputed_seeds)
 
         torch.clamp_max_(x, 3) #Safety check, please normalize inputs properly!
@@ -1312,23 +1317,12 @@ class InstanSeg_Torchscript(nn.Module):
 
             dim_out = x_full.shape[1]
 
-            if self.cells_and_nuclei:
-                iterations = torch.tensor([0,1]) [target_segmentation.squeeze().to("cpu") > 0 ]
-                dim_out = int(dim_out / 2)
-
-            else:
-                iterations = torch.tensor([0])
-                dim_out = dim_out
-
             output_labels_list = []
 
             for image_index in range(x_full.shape[0]):
                 labels_list = []
-                for i in iterations:
-                    if i == 0:
-                        x = x_full[image_index,0: dim_out, :, :]
-                    else:
-                        x = x_full[image_index,dim_out:, :, :]
+                for _ in range(1):
+                    x = x_full[image_index, :, :, :]
 
                     x = _recover_padding(x, pad)
 
@@ -1469,13 +1463,7 @@ class InstanSeg_Torchscript(nn.Module):
                         labels_list[i] = lab.to("cpu")
 
 
-                if len(labels_list) == 1:
-                    lab = labels_list[0][None, None]  # 1,1,H,W
-                else:
-                    lab = torch.stack(labels_list)[None] 
-
-                if lab.shape[1] == 2 and resolve_cell_and_nucleus: #nuclei and cells
-                    lab = resolve_cell_and_nucleus_boundaries(lab)
+                lab = labels_list[0][None, None]  # 1,1,H,W
 
                 output_labels_list.append(lab[0])
             

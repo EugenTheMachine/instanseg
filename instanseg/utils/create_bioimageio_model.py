@@ -1,4 +1,5 @@
 import os
+import warnings
 import bioimageio.core
 import numpy as np
 import torch
@@ -161,17 +162,14 @@ def export_bioimageio(torchsript: torch.jit._script.RecursiveScriptModule,
         step = 0
 
 
-    target_segmentation = model_dict["target_segmentation"]
-    print("Cells and nuclei: ", target_segmentation)
+    if "target_segmentation" in model_dict:
+        warnings.warn(
+            "target_segmentation is deprecated and ignored; exports contain cell segmentation only.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     if output_channel_names is None:
-        if target_segmentation == "N":
-            output_channel_names = ["nuclei"]
-        elif target_segmentation == "C":
-            output_channel_names = ["cells"]
-        elif target_segmentation == "NC":
-            output_channel_names = ["nucei", "cells"]
-        else:
-            output_channel_names = ["nuclei"]
+        output_channel_names = ["cells"]
         print("Assuming output channel names: ", output_channel_names)
 
     Augmenter=Augmentations()

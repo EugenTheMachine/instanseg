@@ -2,6 +2,28 @@
 import numpy as np
 import warnings
 
+
+def _canonical_supported_modality(modality):
+    normalized = str(modality).strip().lower().replace("_", "-")
+    if normalized in {"brightfield", "chromogenic"}:
+        return "Brightfield"
+    if normalized in {"phase-contrast", "phase contrast", "phasecontrast"}:
+        return "phase-contrast"
+    return None
+
+
+def _is_supported_modality(item):
+    modality = item.get("image_modality", item.get("modality"))
+    if modality is None:
+        if "image" not in item or "cell_masks" not in item:
+            return False
+        from instanseg.utils.utils import _estimate_image_modality
+
+        modality = _estimate_image_modality(get_image(item["image"]), get_image(item["cell_masks"]))
+
+    return _canonical_supported_modality(modality) is not None
+
+
 def _keep_images(item, args):
 
     #args.source_dataset = str(args.source_dataset).lower().replace("[","").replace("]","").replace("'","").split(",")
@@ -11,60 +33,26 @@ def _keep_images(item, args):
         return False
     elif 'duplicate' in item.keys() and item['duplicate']:  # remove items that are duplicates
         return False
-    elif args.target_segmentation == "N" and "nucleus_masks" not in item.keys():
+    elif "cell_masks" not in item.keys():
         return False
-    elif args.target_segmentation == "C" and "cell_masks" not in item.keys():
+    elif not _is_supported_modality(item):
         return False
     else:
         return True
     
  
-def _format_labels(item,target_segmentation):
-            
-    if "cell_masks" in item.keys():
-        item["cell_masks"] = get_image(item["cell_masks"])
-    
-    if "nucleus_masks" in item.keys():
-        item["nucleus_masks"] = get_image(item["nucleus_masks"])
- 
-    elif "masks" in item.keys():
-        item["nucleus_masks"] = get_image(item["masks"])
-    
-    if target_segmentation == "N":
-        if "nucleus_masks" not in item.keys():
-            c,h,w = item['image'].shape
-            labels = np.zeros((h,w)) -1
-        else:
-            labels = item["nucleus_masks"]
-    elif target_segmentation == "C":
-        if "cell_masks" not in item.keys():
-            c,h,w = item['image'].shape
-            labels = np.zeros((h,w)) -1
-        else:
-            labels = item["cell_masks"]
-    elif "N" in target_segmentation and "C" in target_segmentation:
-            if "nucleus_masks" in item.keys() and "cell_masks" in item.keys():
-                labels = np.stack((item["nucleus_masks"], item["cell_masks"]))
-            elif "nucleus_masks" in item.keys() and "cell_masks" not in item.keys():
-                labels = item['nucleus_masks']
-                if isinstance(labels, np.ndarray):
-                    labels = labels.astype(np.int32)
-                else:
-                    labels = np.array(labels).astype(np.int32)
-                labels = np.stack((labels, np.zeros_like(labels) - 1))
-            elif "nucleus_masks" not in item.keys() and "cell_masks" in item.keys():
-                labels = item['cell_masks']
-                if isinstance(labels, np.ndarray):
-                    labels = labels.astype(np.int32)
-                else:
-                    labels = np.array(labels).astype(np.int32)
-                labels = np.stack((np.zeros_like(labels) - 1, labels))
-            else:
-                raise NotImplementedError("No labels found")
-    else:
-        raise NotImplementedError("Target segmentation not recognized", target_segmentation)
- 
-    return labels
+def _format_labels(item, target_segmentation=None):
+    if target_segmentation is not None:
+        warnings.warn(
+            "target_segmentation is deprecated and ignored; only cell segmentation is supported.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    if "cell_masks" not in item:
+        return np.full(item["image"].shape[-2:], -1, dtype=np.int32)
+
+    return get_image(item["cell_masks"])
  
 
 
@@ -232,10 +220,19 @@ def _read_images_from_pth(data_path= "../datasets", dataset = "segmentation", da
         print(set((k.item(), v.item()) for k, v in zip(unique_values, counts)))
 
         data_dicts[_set] = []
-        images_local = [get_image(item['image']) for item in complete_dataset[_set] if _keep_images(item, args)][:data_slice]
- 
-        labels_local = [_format_labels(item,target_segmentation = args.target_segmentation) for item in complete_dataset[_set] if _keep_images(item, args)][:data_slice]
-        metadata = [{k: v for k, v in item.items() if k not in ('image', 'cell_masks','nucleus_masks', 'class_masks')} for item in complete_dataset[_set] if _keep_images(item, args)][:data_slice]
+        kept_items = [item for item in complete_dataset[_set] if _keep_images(item, args)][:data_slice]
+        images_local = [get_image(item['image']) for item in kept_items]
+        labels_local = [_format_labels(item) for item in kept_items]
+        metadata = []
+        for item in kept_items:
+            item_metadata = {
+                key: value
+                for key, value in item.items()
+                if key not in ('image', 'cell_masks', 'nucleus_masks', 'class_masks')
+            }
+            if "image_modality" not in item_metadata and "modality" in item_metadata:
+                item_metadata["image_modality"] = item_metadata["modality"]
+            metadata.append(item_metadata)
 
         data_dicts[_set].extend([images_local,labels_local,metadata])
 
@@ -270,15 +267,28 @@ def read_directory_dataset(
     val_ratio: float = 0.2,
     test_ratio: float = 0.2,
     seed: int = 42,
+    image_modality: str = "auto",
 ):
     """
-    Reads dataset structured as:
+        Reads cell instance masks from a dataset structured as:
     data_dir/
       train/images/, train/masks/
       val/images/, val/masks/ (optional)
       test/images/, test/masks/ (optional)
+
+        In auto mode, fluorescence-like image/mask pairs are excluded. Set
+        image_modality to "phase-contrast" for phase-contrast datasets.
     """
     from pathlib import Path
+
+    if not isinstance(image_modality, str):
+        raise ValueError("image_modality must be 'auto', 'brightfield', or 'phase-contrast'.")
+
+    requested_modality = None
+    if image_modality.lower() != "auto":
+        requested_modality = _canonical_supported_modality(image_modality)
+        if requested_modality is None:
+            raise ValueError("image_modality must be 'auto', 'brightfield', or 'phase-contrast'.")
     import skimage.io
     import tifffile
     import cv2
@@ -353,9 +363,17 @@ def read_directory_dataset(
             if m_f is not None and m_f.exists():
                 img = _read_img(img_f)
                 msk = _read_msk(m_f)
+                if requested_modality is None:
+                    from instanseg.utils.utils import _estimate_image_modality
+                    modality = _canonical_supported_modality(_estimate_image_modality(img, msk))
+                else:
+                    modality = requested_modality
+                if modality is None:
+                    continue
                 meta = {
                     "parent_dataset": data_dir.name,
-                    "modality": "Brightfield",
+                    "modality": modality,
+                    "image_modality": modality,
                     "pixel_size": None,
                     "name": img_f.name,
                 }
@@ -418,6 +436,14 @@ def get_loaders(train_images_local, train_labels_local, val_images_local, val_la
     import torch
     import random
 
+    for key in ("target_segmentation", "cells_and_nuclei"):
+        if getattr(args, key, None) is not None:
+            warnings.warn(
+                f"{key} is deprecated and ignored; data loading always uses cell masks.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
     seed_val = getattr(args, "seed", None) or getattr(args, "rng_seed", None) or 42
     torch.manual_seed(seed_val)
     generator = torch.Generator()
@@ -437,9 +463,7 @@ def get_loaders(train_images_local, train_labels_local, val_images_local, val_la
                                       augmentation_dict=augmentation_dict['train'],
                                       debug=False,
                                       dim_in=args.dim_in,
-                                      cells_and_nuclei=args.cells_and_nuclei,
                                       random_seed=seed_val,
-                                      target_segmentation=args.target_segmentation, 
                                       channel_invariant = args.channel_invariant)
 
     test_data = Segmentation_Dataset(val_images_local, val_labels_local, 
@@ -448,8 +472,6 @@ def get_loaders(train_images_local, train_labels_local, val_images_local, val_la
                                      dim_in=args.dim_in,
                                      augmentation_dict=augmentation_dict['test'],
                                      random_seed = seed_val,
-                                     cells_and_nuclei=args.cells_and_nuclei,
-                                     target_segmentation=args.target_segmentation,
                                      channel_invariant = args.channel_invariant)
 
     if getattr(args, "length_of_epoch", None) is not None:

@@ -95,34 +95,34 @@ class TestNormalization:
         assert result is not None
 
 
-class TestTargetSegmentation:
-    """Tests for different target segmentation modes"""
-
-    @pytest.fixture(autouse=True)
-    def setup(self):
+class TestCellOnlyInference:
+    def _create_inference_instance(self, monkeypatch):
         from instanseg import InstanSeg
-        self.instanseg = InstanSeg("fluorescence_nuclei_and_cells", verbosity=0, device=device)
 
-    def test_nuclei_only(self):
-        input_tensor = torch.rand(1, 3, 256, 256)
-        result = self.instanseg.eval_small_image(
-            input_tensor, pixel_size=0.5, target="nuclei", return_image_tensor=False
-        )
-        assert result.shape[1] == 1  # Only nuclei channel
+        class CellModel(torch.nn.Module):
+            def forward(self, image):
+                return torch.zeros((image.shape[0], 1, *image.shape[-2:]), device=image.device)
 
-    def test_cells_only(self):
-        input_tensor = torch.rand(1, 3, 256, 256)
-        result = self.instanseg.eval_small_image(
-            input_tensor, pixel_size=0.5, target="cells", return_image_tensor=False
-        )
-        assert result.shape[1] == 1  # Only cells channel
+        monkeypatch.setattr("instanseg.utils.utils._filter_kwargs", lambda model, kwargs: {})
+        instance = object.__new__(InstanSeg)
+        instance.inference_device = torch.device("cpu")
+        instance.instanseg = CellModel()
+        return instance
 
-    def test_all_outputs(self):
-        input_tensor = torch.rand(1, 3, 256, 256)
-        result = self.instanseg.eval_small_image(
-            input_tensor, pixel_size=0.5, target="all_outputs", return_image_tensor=False
-        )
-        assert result.shape[1] == 2  # Both nuclei and cells
+    def test_inference_always_returns_one_cell_channel(self, monkeypatch):
+        from instanseg import InstanSeg
+
+        instance = self._create_inference_instance(monkeypatch)
+        image = torch.rand(1, 3, 32, 32)
+
+        result = instance.eval_small_image(image, normalise=False, return_image_tensor=False)
+        assert result.shape == (1, 1, 32, 32)
+
+        with pytest.warns(DeprecationWarning, match="returns cell segmentation only"):
+            result = instance.eval_small_image(
+                image, normalise=False, target="nuclei", return_image_tensor=False
+            )
+        assert result.shape == (1, 1, 32, 32)
 
 
 class TestMediumImageTiling:
@@ -165,9 +165,8 @@ class TestDisplayFunction:
 
     def test_display_with_numpy_input(self):
         image = np.random.rand(3, 256, 256).astype(np.float32)
-        labels = torch.zeros((1, 2, 256, 256), dtype=torch.int32)
-        labels[0, 0, 50:100, 50:100] = 1
-        labels[0, 1, 45:105, 45:105] = 1
+        labels = torch.zeros((1, 1, 256, 256), dtype=torch.int32)
+        labels[0, 0, 45:105, 45:105] = 1
         
         result = self.instanseg.display(image, labels)
         assert result is not None

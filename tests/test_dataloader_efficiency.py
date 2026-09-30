@@ -22,10 +22,11 @@ def create_dummy_dataset(tmp_dir: Path):
     train_msk_dir.mkdir(parents=True, exist_ok=True)
 
     for i in range(4):
-        img = (np.random.rand(128, 128, 3) * 255).astype(np.uint8)
         mask = np.zeros((128, 128), dtype=np.uint16)
         mask[20:50, 20:50] = 1
         mask[60:90, 60:90] = 2
+        img = np.full((128, 128, 3), 180, dtype=np.uint8)
+        img[mask > 0] = 40
 
         tifffile.imwrite(train_img_dir / f"image_{i}.tif", img)
         cv2.imwrite(str(train_msk_dir / f"mask_{i}.png"), mask)
@@ -53,8 +54,6 @@ def test_dataloader_efficiency():
                 "mean_object_diameter": None,
                 "augmentation_type": "minimal",
                 "tile_size": 128,
-                "cells_and_nuclei": False,
-                "target_segmentation": "N",
                 "channel_invariant": False,
                 "length_of_epoch": len(train_imgs),
                 "weight": False,

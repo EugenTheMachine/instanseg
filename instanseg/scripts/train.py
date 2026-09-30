@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 import sys
+import warnings
 from torch import nn
 import torch
 import torch.optim as optim
@@ -24,7 +25,10 @@ parser.add_argument("-e_s", "--experiment_str", type=str, default="my_first_inst
 parser.add_argument("-d", "--device", type=str, default=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
 parser.add_argument('-num_workers', '--num_workers', default=3, type=int, help = "Number of CPU cores to use for data loading")
 parser.add_argument('-ci', '--channel_invariant', default=False, type=lambda x: (str(x).lower() == 'true'), help = "Whether to add a channel invariant model to the pipeline")
-parser.add_argument('-target', '--target_segmentation', default="N",type=str, help = " Cells or nuclei or both? Accepts: C,N, NC")  
+parser.add_argument('-target', '--target_segmentation', default=None, type=str,
+                    help="Deprecated and ignored; training always uses cell masks.")
+parser.add_argument('--cells_and_nuclei', default=None, type=lambda x: str(x).lower() == 'true',
+                    help="Deprecated and ignored; training always uses cell masks.")
 parser.add_argument('-pixel_size', '--requested_pixel_size', default=None, type=float, help = "Requested pixel size to rescale the input images")
 
 #advanced usage
@@ -80,7 +84,6 @@ def main(model, loss_fn, train_loader, test_loader, num_epochs=1000, epoch_name=
 
     best_f1_score = -1
     f1_list = []
-    f1_list_cells = []
 
     for epoch in range(num_epochs):
 
@@ -114,18 +117,9 @@ def main(model, loss_fn, train_loader, test_loader, num_epochs=1000, epoch_name=
         dict_to_print = {"train_loss": train_loss, "test_loss": test_loss, "training_time": int(train_time),
                          "testing_time": int(test_time)}
 
-        if args.cells_and_nuclei:
-            f1_list.append(f1_score[0])
-            f1_list_cells.append(f1_score[1])
-            dict_to_print["f1_score_nuclei"] = f1_score[0]
-            dict_to_print["f1_score_cells"] = f1_score[1]
-            f1_score = np.nanmean(f1_score)
-            dict_to_print["f1_score_joint"] = f1_score
-
-        else:
-            f1_score = f1_score[0]
-            f1_list.append(f1_score)
-            dict_to_print["f1_score"] = f1_score
+        f1_score = f1_score[0]
+        f1_list.append(f1_score)
+        dict_to_print["f1_score"] = f1_score
 
         if scheduler is not None:
             dict_to_print["lr:"] = optimizer.param_groups[0]["lr"]
@@ -148,7 +142,7 @@ def main(model, loss_fn, train_loader, test_loader, num_epochs=1000, epoch_name=
         # this is where the loss gets printed
         print(", ".join(f"{k}: {v:.5g}" for k, v in dict_to_print.items()))
 
-    return model, train_losses, test_losses, f1_list, f1_list_cells
+    return model, train_losses, test_losses, f1_list
 
 from typing import Dict
 def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
@@ -161,6 +155,15 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
             setattr(args, key, value)
         else:
             raise ValueError(f"Argument {key} not recognized")
+
+    for key in ("target_segmentation", "cells_and_nuclei"):
+        if getattr(args, key) is not None:
+            warnings.warn(
+                f"{key} is deprecated and ignored; training always uses cell masks.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            delattr(args, key)
 
        
     from instanseg.utils.utils import plot_average, _choose_device
@@ -205,11 +208,6 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
     if args.norm == "None":
         args.norm = None
 
-    if len(args.target_segmentation) == 2:
-        args.cells_and_nuclei = True
-    else:
-        args.cells_and_nuclei = False
-        
     device = _choose_device(args.device)
 
     if args.loss_function == "instanseg_loss":
@@ -220,7 +218,6 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
                         seed_loss_fn = args.seed_loss_fn, 
                         device = device,
                         n_sigma=n_sigma,
-                        cells_and_nuclei=args.cells_and_nuclei, 
                         window_size = args.window_size, 
                         dim_coords= args.dim_coords,
                         dim_seeds = args.dim_seeds, 
@@ -371,13 +368,13 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
         if args.seed_loss_fn != "distance_and_binary_loss":
             method.update_seed_loss("binary_xloss")
         method.update_binary_loss("dice_loss")
-        model, train_losses, test_losses, f1_list, f1_list_cells = main(model, loss_fn, train_loader, test_loader, num_epochs=hot_epochs, epoch_name='hotstart_epoch')
+        model, train_losses, test_losses, f1_list = main(model, loss_fn, train_loader, test_loader, num_epochs=hot_epochs, epoch_name='hotstart_epoch')
 
         print("Starting main training loop with",args.seed_loss_fn, "and", args.binary_loss_fn)
         method.update_seed_loss(args.seed_loss_fn)
         method.update_binary_loss(args.binary_loss_fn)
 
-    model, train_losses, test_losses, f1_list, f1_list_cells = main(model, loss_fn, train_loader, test_loader, num_epochs=num_epochs)
+    model, train_losses, test_losses, f1_list = main(model, loss_fn, train_loader, test_loader, num_epochs=num_epochs)
 
     from instanseg.utils.model_loader import load_model
     model, model_dict = load_model(folder="", path=args.output_path) #Load model from checkpoint
@@ -392,19 +389,11 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
     plt.savefig(args.output_path / "loss.png")
     plt.close()
 
-    if args.cells_and_nuclei:
-        fig = plt.plot(f1_list, label="f1 score nuclei")
-        plt.plot(f1_list_cells, label="f1 score cells")
-        plt.ylim(0, 1)
-        plt.savefig(args.output_path / "f1_metric.png")
-        plt.legend()
-        plt.close()
-
-    else:
-        fig = plt.plot(f1_list, label="f1 score")
-        plt.ylim(0, 1)
-        plt.savefig(args.output_path / "f1_metric.png")
-        plt.close()
+    plt.plot(f1_list, label="f1 score cells")
+    plt.ylim(0, 1)
+    plt.savefig(args.output_path / "f1_metric.png")
+    plt.legend()
+    plt.close()
 
     if not args.on_cluster and args.experiment_str is None:
         experiment_str = "experiment"

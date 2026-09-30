@@ -6,7 +6,7 @@ import random
 import numpy as np
 from torchvision.transforms import RandomCrop, Resize, RandomPerspective
 from monai.transforms import RandGaussianNoise, AdjustContrast
-from instanseg.utils.utils import percentile_normalize, generate_colors
+from instanseg.utils.utils import percentile_normalize
 import warnings
 
 import time
@@ -49,42 +49,6 @@ def measure_average_instance_area(lab):
         else:
             return 0
 
-def resize_lab(lab, size, double_check=False):
-    """This function resizes a label to required instance area. It does so by first measuring the average instance area and assumes instances are roughly circular"""
-    avg_size = measure_average_instance_area(lab)
-
-    if avg_size == 0:
-        return list(np.array(lab[0].shape))
-
-    radius_orig = np.sqrt(avg_size / 3.14)  # Assuming labels are roughly circular
-    radius_requested = np.sqrt(size / 3.14)
-
-    # print(avg_size,size,radius_orig,radius_requested)
-
-    ratio = radius_orig / radius_requested
-
-    shape = np.array(lab[0].shape)
-
-    if double_check:
-        resized_lab = Resize(size=list(((shape / ratio).int())), antialias=True,
-                             interpolation=torchvision.transforms.InterpolationMode.NEAREST)(lab[None,]).to(lab.dtype)
-        assert np.isclose(measure_average_instance_area(resized_lab), size, rtol=0.6)
-
-    return list(((shape / ratio).int()))
-
-
-def generate_random_label_area(min=30, max=30): 
-    from scipy.stats import skewnorm
-    a = 5
-    # mean, var, skew, kurt = skewnorm.stats(a, moments='mvsk')
-    mean = 0.7824
-    r = skewnorm.rvs(a, size=1)
-    r = (r - mean) + 1
-    r = np.clip(((r - mean) + 0.2) * 500, min, max)
-    return r
-
-
-
 def resize_with_log_scale(lab, mean_diameter=30, min_scale=0.25, max_scale=4):
     # Get the original cell diameter
     original_diameter = 2 * np.sqrt(measure_average_instance_area(lab) / np.pi)  # Assuming circular cells
@@ -103,22 +67,15 @@ def resize_with_log_scale(lab, mean_diameter=30, min_scale=0.25, max_scale=4):
 
 
 
-def get_marker_location(meta):
-    from instanseg.utils.augmentation_config import markers_info
-    stains = [channel_str.split(" ")[0] for channel_str in meta['channel_names']]
-    subcellular_location = ["N/A" if channel.upper() not in markers_info.keys() else markers_info[channel.upper()]['Subcellular Location'] for channel in stains]
-    meta["subcellular_location"] = subcellular_location
-    return meta
-    
 class Augmentations(object):
     def __init__(self, augmentation_dict={},
                  shape=(256, 256), 
                  dim_in=3,
-                 nuclei_channel=None, 
+                 nuclei_channel=None,
                  debug=False, 
                  modality=None, 
-                 cells_and_nuclei=False, 
-                 target_segmentation="N",
+                 cells_and_nuclei=None,
+                 target_segmentation=None,
                  channel_invariant = False,
                  random_seed=None):
         
@@ -126,10 +83,25 @@ class Augmentations(object):
         self.shape = shape
         self.augmentation_dict = augmentation_dict
         self.modality = modality
-        self.cells_and_nuclei = cells_and_nuclei
-        self.target_segmentation = target_segmentation
+        if cells_and_nuclei is not None:
+            warnings.warn(
+                "cells_and_nuclei is deprecated and ignored; only cell segmentation is supported.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if target_segmentation is not None:
+            warnings.warn(
+                "target_segmentation is deprecated and ignored; only cell segmentation is supported.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if nuclei_channel is not None:
+            warnings.warn(
+                "nuclei_channel is deprecated and ignored; only brightfield and phase-contrast cell segmentation is supported.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.dim_in = dim_in  # Note, this is the number of input channels to the model, not the number of channels in the raw image. (Can be 'None' for channel invariant models)
-        self.nuclei_channel = nuclei_channel  # The channel that contains the nuclei. (Can be 'None' for brightfield images or if in image metadata)
         self.channel_invariant = channel_invariant
 
         if random_seed is not None:
@@ -373,8 +345,6 @@ class Augmentations(object):
         image = image * (max - min + 0.001) + min
 
         return image, labels
-
-    
     def flips(self, image, labels, amount=0, metadata=None):
 
         amount = 0.5
@@ -461,186 +431,6 @@ class Augmentations(object):
 
 
     # @measure_time
-    def pseudo_brightfield(self, image, labels=None, amount=0, c_nuclei=0, metadata=None, random_seed=None):
-
-        if self.debug:
-            orig = torch.clone(image)  # .copy()
-        orig_dtype = image.dtype
-
-        if random_seed is not None:
-            np.random.seed(random_seed)
-
-        if metadata is not None and metadata["image_modality"] != "Fluorescence":
-            return image, labels
-        
-        image , _ , c_nuclei= self.extract_nucleus_and_cytoplasm_channels(image, labels, c_nuclei, metadata)
-
-        image = percentile_normalize(image, 0.01, subsampling_factor=5)
-
-        stains = {
-            'hematoxylin': torch.Tensor([0.65, 0.70, 0.29]),
-            'dab': torch.Tensor([0.27, 0.57, 0.78]),
-            'eosin': torch.Tensor([0.2159, 0.8012, 0.5581])
-        }
-
-        assert c_nuclei is not None
-        im_nuclei = image[c_nuclei]
-
-        my_stains = [torch.clone(stains['hematoxylin'])]
-        channels = [im_nuclei]
-
-        if np.random.random() > 0.1:
-            my_stains.append(torch.clone(stains['dab']))
-
-            all_channels = np.arange(len(image))
-            c_other = np.random.choice(all_channels[all_channels != c_nuclei])
-            channels.append(image[c_other])
-
-        for ii in range(len(my_stains)):
-            stain = my_stains[ii]
-            stain += np.random.random(3) / 4
-            stain /= np.linalg.norm(stain)
-            stain_scale = 1 + (np.random.random() - 0.5) / 5
-            my_stains[ii] = stain * stain_scale
-
-        im_output = 0
-        channels = [temp for temp in channels]
-
-        for stain, im_channel in zip(my_stains, channels):
-            stain = stain.reshape((3, 1, 1))
-
-            im_output += im_channel * stain * float(np.random.randint(3, 5))
-
-        im_output = torch.exp(-np.log(10.0) * im_output)
-        im_output = torch.clip(im_output, 0, 1)
-
-        if self.debug:
-            print("Eosin")
-            show_images([orig, im_output], titles=["Original", "Transformed"])
-
-        return torch.Tensor(im_output).to(orig_dtype), labels
-
-    def colourize(self, image, labels=None, amount=0, c_nuclei=-1, random_seed=None, metadata=None):
-
-        # Expects a 3D tensor C,H,W
-
-        if self.debug:
-            orig = torch.clone(image)  # .copy()
-
-        if random_seed is not None:
-            np.random.seed(random_seed)
-
-        if metadata is not None and metadata["image_modality"] != "Fluorescence":
-            return image, labels
-        # colours = [[1, 0, 0], [0, 1, 0], [1, 1, 0], [0, 1, 1], [1, 0, 1]]
-
-        if image.shape[0] == 3:
-            return image, labels
-        
-        if c_nuclei is None:
-            c_nuclei = 0
-
-        colours = generate_colors(num_colors=image.shape[0])
-        np.random.shuffle(colours)
-        if np.min(image.shape) == 1:
-            c_nuclei = 0  # If we have a greyscale image, we want to colourize the one and only nuclei channel
-        
-        coloured_image = image[c_nuclei][None,] * torch.Tensor([0, 0, 1])[:, None, None]
-        for i, image_channel in enumerate(image[np.arange(len(image)) != c_nuclei]):
-            colour = colours[i]
-            # greyscale_image_channel = image_channel[None,].expand(3, -1, -1)
-            coloured_image_channel = image_channel * torch.Tensor(colour)[:, None, None]
-            coloured_image += coloured_image_channel
-        assert not coloured_image.isnan().any()
-        image = percentile_normalize(coloured_image, 0.1, subsampling_factor=5)
-        if self.debug:
-            print("Colourize")
-            show_images([orig, image], titles=["Original", "Transformed"])
-        assert not coloured_image.isnan().any()
-        return image, labels
-
-    def pseudo_imc(self, image, labels, amount=0, metadata=None):
-
-        # Expects a 3D tensor C,H,W and labels C,H,W
-        
-
-        if metadata is not None and metadata["image_modality"] != "Fluorescence":
-            return image, labels
-
-        if self.debug:
-            orig = torch.clone(image)  # .copy()
-
-        original_shape = image.shape
-
-        if np.min(torch.squeeze(
-                image).shape) == 3:  # Don't want to run the risk of having a brightfield image in the IMC pipeline.
-            if self.debug:
-                warnings.warn("Possible Brightfield image in IMC pipeline, ignoring.")
-                show_images([orig, image], titles=["Original", "Transformed"])
-
-            return image, labels
-
-        shape = resize_lab(labels,
-                           generate_random_label_area(min=30, max=50))  # Rough size for the nuclei in IMC images.
-
-        resized_data = Resize(size=shape, antialias=True)(image)
-
-        resized_data[resized_data < 0] = 0
-
-        amount = 30 - (
-                amount * 27)  # Assuming we have amount between [0,1], we want to map that to something like [30,3]
-
-        resized_data = torch.poisson(resized_data * amount)
-
-        resized_data = percentile_normalize(resized_data, percentile=0.1, subsampling_factor=3)
-
-        image = Resize(size=original_shape[1:], interpolation=np.random.choice(
-            [torchvision.transforms.InterpolationMode.NEAREST, torchvision.transforms.InterpolationMode.BILINEAR]),
-                       antialias=True)(
-            resized_data)
-
-        if self.debug:
-            print("Pseudo_imc")
-            show_images([orig, image], titles=["Original", "Transformed"])
-
-        return image, labels
-    
-    def channel_shuffle(self, image, labels=None, amount=0, metadata=None):
-        if self.debug:
-            orig = torch.clone(image)
-        channels = torch.randperm(image.shape[0])
-        out = image[channels]
-        if self.debug:
-            print("Channel shuffle")
-            show_images([orig, out], titles=["Original", "Transformed"])
-        return out, labels
-    
-    def add_noisy_channels(self, image, labels=None, max_channels = 30, amount=0, metadata=None):
-        if self.debug:
-            orig = torch.clone(image)
-
-        new_channels_num = np.random.randint(1,max_channels)
-
-        new_channels =np.random.choice(range(image.shape[0]),new_channels_num,replace = True)
-
-        out = image[new_channels]
-        out[out<0]=0
-        amount = np.random.randint(2, 30 * amount)
-
-        channel_weights = torch.randint(1,amount,size = [new_channels_num,1,1],dtype = torch.float32)
-
-
-        out = torch.poisson(out * channel_weights) / (channel_weights*2) 
-
-        out = torch.cat((image,out),dim=0)
-
-        channels = torch.randperm(out.shape[0])
-        out = out[channels]
-
-
-        return out, labels
-
-    # @measure_time
     def add_gradient(self, image, labels=None, amount=0, metadata=None):
         if self.debug:
             orig = torch.clone(image)  # .copy()
@@ -662,66 +452,6 @@ class Augmentations(object):
             show_images([orig, out], titles=["Original", "Transformed"])
 
         return torch.Tensor(out), labels
-
-    # @measure_time
-
-    def channel_subsample(self, image, labels=None, max_channels=None, c_nuclei=None, min_channels=1, metadata=None):
-        channel_num = image.shape[0]
-
-        if channel_num > max_channels:
-            if c_nuclei is None or c_nuclei > channel_num:
-                slice = np.random.choice(np.arange(channel_num), max_channels, replace=False)
-            else:
-                if max_channels == 1:
-                    slice = [c_nuclei]
-                    c_nuclei = 0
-                else:
-
-                    slice = np.random.choice(np.arange(channel_num)[np.arange(channel_num) != c_nuclei],
-                                             np.random.randint(min_channels - 1, max_channels - 1), replace=False)
-
-                    np.random.shuffle(slice)
-                    slice = np.append(slice, c_nuclei)
-
-                    c_nuclei = np.where(slice == c_nuclei)[0][0]
-
-            image = image[slice]
-
-        return image, labels, c_nuclei
-    
-    def channel_suppress(self, image, labels=None, amount = None, metadata=None):
-
-        slice = torch.rand(image.shape[0]) < (1- amount)
-
-        if torch.sum(slice) == 0:
-            slice[np.random.randint(0,image.shape[0])] = True
-
-        image = image[slice]
-
-        return image, labels
-
-    def extract_nucleus_and_cytoplasm_channels(self, image, labels=None, c_nuclei=None, metadata=None, amount=None):
-        channel_num = image.shape[0]
-
-        if metadata is None or "subcellular_location" not in metadata.keys() or len(
-                metadata["subcellular_location"]) != channel_num or c_nuclei is None:
-            return image, labels, c_nuclei
-
-        cytoplasm_channel_ids = ["Cytoplasm" in x or "Membrane" in x or "N/A" in x for x in
-                                 metadata["subcellular_location"]]
-        nuclei_channels_ids = c_nuclei
-
-        if len(cytoplasm_channel_ids) == 0:
-            return image, labels, c_nuclei
-
-        cytoplasm_channels = image[cytoplasm_channel_ids].sum(0)  # Sum projection of the cytoplasm channels
-        nuclei_channels = image[nuclei_channels_ids]
-
-        image = torch.stack([nuclei_channels, cytoplasm_channels])
-
-        c_nuclei = 0
-
-        return image, labels, c_nuclei
 
     
     def torch_rescale(self, image, 
@@ -826,24 +556,32 @@ class Augmentations(object):
             print("Duplicate channels")
             show_images([orig, image], titles=["Original", "Transformed"])
         return image, labels
-
     def __call__(self, image, labels, meta=None):
 
         from instanseg.utils.utils import _estimate_image_modality
 
         if self.modality is None:
-            if meta is not None and "image_modality" in meta.keys():
-                if meta["image_modality"] in ["Brightfield", "Chromogenic"]:
+            if meta is not None and ("image_modality" in meta or "modality" in meta):
+                image_modality = meta.get("image_modality", meta.get("modality"))
+                normalized_modality = str(image_modality).strip().lower().replace("_", "-")
+                if normalized_modality in {"brightfield", "chromogenic"}:
                     observed_modality = "Brightfield"
                     if min(image.squeeze().shape) != 3:
                         observed_modality = "phase-contrast"
+                elif normalized_modality in {"phase-contrast", "phase contrast", "phasecontrast"}:
+                    observed_modality = "phase-contrast"
                 else:
-                    observed_modality = meta["image_modality"]
+                    observed_modality = image_modality
             else:
                 observed_modality = _estimate_image_modality(image, labels)
             modality = observed_modality
         else:
             modality = self.modality
+
+        if modality not in {"Brightfield", "phase-contrast"}:
+            raise ValueError(
+                f"Unsupported image modality {modality!r}; only brightfield and phase-contrast cell segmentation is supported."
+            )
 
         if self.debug:
             print("Observed modality:", modality)
@@ -854,35 +592,11 @@ class Augmentations(object):
         if self.debug:
             print(augmentation_dict.keys())
 
-        if meta is not None:
-            if "nuclei_channels" in meta.keys():
-                channels_nuclei = meta["nuclei_channels"]
-                c_nuclei = np.random.choice(channels_nuclei)
+        pixel_size = meta.get("pixel_size") if meta is not None else None
+        if not isinstance(pixel_size, float):
+            pixel_size = None
 
-            else:
-                c_nuclei = self.nuclei_channel
-
-            if "pixel_size" in meta.keys():
-                pixel_size = (meta["pixel_size"])
-            else:
-                pixel_size = None
-            
-            if not isinstance((pixel_size),float):
-                import warnings
-                warnings.warn(f"Pixel size {pixel_size} is not a float {type(pixel_size)}, check metadata")
-                pixel_size = None
-
-        if meta is not None and "channel_names" in meta.keys():
-            from instanseg.utils.augmentation_config import markers_info
-            stains = [channel_str.split(" ")[0] for channel_str in meta['channel_names']]
-            subcellular_location = [
-                "N/A" if channel.upper() not in markers_info.keys() else markers_info[channel.upper()][
-                    'Subcellular Location'] for channel in stains]
-        else:
-            subcellular_location = ["N/A" for _ in range(image.shape[0])]
-
-        metadata = {"image_modality": modality, "nuclei_channels": c_nuclei, "pixel_size": pixel_size,
-                    "subcellular_location": subcellular_location}
+        metadata = {"image_modality": modality, "pixel_size": pixel_size}
 
         has_been_normalized = False
 
@@ -890,30 +604,11 @@ class Augmentations(object):
 
             if np.random.random() < values[0]:
 
-                if augmentation in ["normalize_HE_stains", "extract_hematoxylin_stain", "normalize", "pseudo_background"]:
+                if augmentation in ["normalize_HE_stains", "extract_hematoxylin_stain", "normalize"]:
                     if not has_been_normalized:
-                        if augmentation != "normalize":
-                            _, amount = values
+                        amount = values[1] if len(values) > 1 else None
                         image, labels = getattr(self, augmentation)(image, labels, amount=amount, metadata=metadata)
                         has_been_normalized = True
-
-                    else:
-                        pass
-
-                elif augmentation == "pseudo_brightfield":
-                    image, labels = self.pseudo_brightfield(image, labels, c_nuclei=c_nuclei, metadata=metadata)
-                    metadata["image_modality"] = "Brightfield"
-
-                elif augmentation == "channel_subsample":
-                    _, (min_channels, max_channels) = values
-                    image, labels, c_nuclei = self.channel_subsample(image, labels, max_channels=max_channels + 1,
-                                                                     c_nuclei=c_nuclei, min_channels=min_channels,
-                                                                     metadata=metadata)
-                elif augmentation == "extract_nucleus_and_cytoplasm_channels":
-                    image, labels, c_nuclei = self.extract_nucleus_and_cytoplasm_channels(image, labels,
-                                                                                          c_nuclei=c_nuclei,
-                                                                                          metadata=metadata)
-
                 elif augmentation == "torch_rescale":
                     _, requested_pixel_size, diameter_range = values
                     if not (isinstance(diameter_range, tuple) and len(diameter_range) == 3):
@@ -923,15 +618,6 @@ class Augmentations(object):
                                                        requested_pixel_size=requested_pixel_size, 
                                                        diameter_range=diameter_range,
                                                        metadata=metadata)
-
-                elif augmentation == "colourize":
-                    _, amount = values
-                    image, labels = self.colourize(image, labels, c_nuclei=c_nuclei, metadata=metadata)
-
-
-                elif augmentation == "add_noisy_channels":
-                    _, max_channels = values
-                    image, labels = self.add_noisy_channels(image, labels, metadata=metadata, max_channels=max_channels, amount = 0.5)
 
                 else:
                     p, *rest = values
@@ -956,18 +642,6 @@ class Augmentations(object):
         return image, labels
 
 
-if __name__ == "__main__":
-    from instanseg.utils.augmentation_config import get_augmentation_dict
-
-    augmentation_dict = get_augmentation_dict(nuclei_channel=6, dim_in=3, amount=0.5,augmentation_type="heavy")['train']
-
-    import tifffile
-
-    img = tifffile.imread(r"../examples/LuCa1.tif")[:,:512,:512]
-    label = tifffile.imread(r"../examples/LuCa1_label.tif")[:512,:512]
-    meta = {"image_modality": "Fluorescence", "nuclei_channels": [7]}
 
 
-    Augmenter = Augmentations(augmentation_dict=augmentation_dict, debug=False,dim_in = None)
 
-    show_images([Augmenter(img, label, meta)[0] for i in range(30)])

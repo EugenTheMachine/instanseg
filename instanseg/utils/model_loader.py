@@ -1,4 +1,5 @@
 import numpy as np
+import warnings
 
 
 def build_monai_model(model_str: str, build_model_dictionary: dict):
@@ -68,8 +69,6 @@ def read_model_args_from_csv(path=r"../results/", folder=""):
         build_model_dictionary["layers"] = tuple(eval(build_model_dictionary["layers"]))
     if "requested_pixel_size" in build_model_dictionary.keys():
         build_model_dictionary["pixel_size"] = float(build_model_dictionary["requested_pixel_size"])
-    if "cells_and_nuclei" in build_model_dictionary.keys():
-        build_model_dictionary["cells_and_nuclei"] = bool(eval(build_model_dictionary["cells_and_nuclei"]))
     if "norm" in build_model_dictionary.keys():
         if build_model_dictionary["norm"] == "None" or str(build_model_dictionary["norm"]).lower() == "nan":
             build_model_dictionary["norm"] = None
@@ -105,6 +104,16 @@ def read_model_args_from_csv(path=r"../results/", folder=""):
 
 def build_model_from_dict(build_model_dictionary, random_seed = None):
 
+    legacy_mode_keys = [
+        key for key in ("cells_and_nuclei", "target_segmentation")
+        if key in build_model_dictionary
+    ]
+    if legacy_mode_keys:
+        warnings.warn(
+            f"{', '.join(legacy_mode_keys)} is deprecated and ignored; only cell segmentation is supported.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     #set seed 
     if random_seed is not None:
         import torch
@@ -123,21 +132,11 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
             print("Generating InstanSeg_UNet")
             multihead = build_model_dictionary["multihead"]
 
-            if build_model_dictionary["cells_and_nuclei"]:
-                n_seeds = build_model_dictionary["dim_seeds"]
-                if not multihead:
-                    from itertools import chain
-                    out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],n_seeds] for i in range(2)]
-                    out_channels = list(chain(*out_channels))
-                
-                else:
-                    out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],n_seeds] for i in range(2)]
+            n_seeds = build_model_dictionary["dim_seeds"]
+            if not multihead:
+                out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],n_seeds]]
             else:
-                n_seeds = build_model_dictionary["dim_seeds"]
-                if not multihead:
-                    out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],n_seeds]]
-                else:
-                    out_channels = [[build_model_dictionary["dim_coords"]], [build_model_dictionary["n_sigma"]],[n_seeds]]
+                out_channels = [[build_model_dictionary["dim_coords"]], [build_model_dictionary["n_sigma"]],[n_seeds]]
 
             model = InstanSeg_UNet(in_channels=dim_in, 
                             layers = np.array(build_model_dictionary["layers"])[::-1],
@@ -153,10 +152,7 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
     elif build_model_dictionary["model_str"].lower() == "sam_unet":
         from instanseg.utils.models.CellposeSam import SAM_UNet
         print("Generating SAM_UNet")
-        if build_model_dictionary["cells_and_nuclei"]:
-            out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],build_model_dictionary["dim_seeds"]] for i in range(2)]
-        else:
-            out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],build_model_dictionary["dim_seeds"]]]
+        out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],build_model_dictionary["dim_seeds"]]]
         model = SAM_UNet(in_channels=dim_in, out_channels=out_channels,
                          layers=np.array(build_model_dictionary["layers"])[::-1],
                          norm=build_model_dictionary["norm"], dropout=build_model_dictionary["dropprob"])

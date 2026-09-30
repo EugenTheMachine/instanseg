@@ -1,6 +1,7 @@
 import os
 import copy
 import random
+import warnings
 import yaml
 import torch
 import numpy as np
@@ -42,7 +43,7 @@ def _load_default_config() -> Dict[str, Any]:
             return yaml.safe_load(f)
     return {
         "meta": {"data_dir": "../data", "experiment_name": None},
-        "preprocessing": {"imgsz": 512, "train_data_ratio": 1.0, "seed": 42},
+        "preprocessing": {"imgsz": 512, "train_data_ratio": 1.0, "seed": 42, "image_modality": "auto"},
         "training": {
             "epochs": 10,
             "patience": 5,
@@ -82,8 +83,17 @@ def _flatten_config(config: Dict[str, Any]) -> Dict[str, Any]:
     flat["dim_out"] = flat.get("dim_out", 6)
     flat["dropprob"] = flat.get("dropout", 0.0)
     flat["layers"] = flat.get("layers", (32, 64, 128, 256))
-    flat["cells_and_nuclei"] = flat.get("cells_and_nuclei", False)
-    flat["target_segmentation"] = flat.get("target_segmentation", "N")
+    deprecated_mode_keys = [
+        key for key in ("cells_and_nuclei", "target_segmentation") if key in flat
+    ]
+    if deprecated_mode_keys:
+        warnings.warn(
+            f"{', '.join(deprecated_mode_keys)} is deprecated and ignored; only cell segmentation is supported.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        for key in deprecated_mode_keys:
+            flat.pop(key)
     flat["multihead"] = flat.get("multihead", False)
     flat["dim_seeds"] = flat.get("dim_seeds", 1)
     flat["dim_coords"] = flat.get("dim_coords", 2)
@@ -141,6 +151,7 @@ class InstanSegModel:
             "imgsz": ("preprocessing", "imgsz"),
             "train_data_ratio": ("preprocessing", "train_data_ratio"),
             "seed": ("preprocessing", "seed"),
+            "image_modality": ("preprocessing", "image_modality"),
             "epochs": ("training", "epochs"),
             "patience": ("training", "patience"),
             "batch_size": ("training", "batch_size"),
@@ -185,6 +196,10 @@ class InstanSegModel:
         if not (0.0 <= tr <= 1.0):
             raise ValueError(f"test_ratio must be between 0.0 and 1.0, got {tr}")
 
+        image_modality = self.config["preprocessing"].get("image_modality", "auto")
+        if image_modality not in {"auto", "brightfield", "phase-contrast"}:
+            raise ValueError("preprocessing.image_modality must be 'auto', 'brightfield', or 'phase-contrast'.")
+
     def _init_model_from_checkpoint(self, ckp_path: Path):
         """Initializes model architecture and loads weights from checkpoint."""
         flat_cfg = _flatten_config(self.config)
@@ -194,7 +209,6 @@ class InstanSegModel:
             seed_loss_fn="l1_distance",
             device=self.device,
             n_sigma=flat_cfg.get("n_sigma", 2),
-            cells_and_nuclei=flat_cfg.get("cells_and_nuclei", False),
             window_size=flat_cfg.get("window_size", 128),
             dim_coords=flat_cfg.get("dim_coords", 2),
             dim_seeds=flat_cfg.get("dim_seeds", 1),
@@ -240,6 +254,7 @@ class InstanSegModel:
             val_ratio=val_ratio,
             test_ratio=test_ratio,
             seed=seed,
+            image_modality=self.config["preprocessing"].get("image_modality", "auto"),
         )
         logger.info("Data loaded successfully")
 
@@ -282,7 +297,6 @@ class InstanSegModel:
             seed_loss_fn="l1_distance",
             device=self.device,
             n_sigma=flat_cfg.get("n_sigma", 2),
-            cells_and_nuclei=flat_cfg.get("cells_and_nuclei", False),
             window_size=flat_cfg.get("window_size", 128),
             dim_coords=flat_cfg.get("dim_coords", 2),
             dim_seeds=flat_cfg.get("dim_seeds", 1),
@@ -507,6 +521,7 @@ class InstanSegModel:
             val_ratio=float(self.config["training"]["val_ratio"]),
             test_ratio=float(self.config["training"]["test_ratio"]),
             seed=seed,
+            image_modality=self.config["preprocessing"].get("image_modality", "auto"),
         )
 
         split_data = dataset_splits.get(subset, dataset_splits["test"])
@@ -533,7 +548,6 @@ class InstanSegModel:
             seed_loss_fn="l1_distance",
             device=self.device,
             n_sigma=flat_cfg.get("n_sigma", 2),
-            cells_and_nuclei=flat_cfg.get("cells_and_nuclei", False),
             window_size=flat_cfg.get("window_size", 128),
             dim_coords=flat_cfg.get("dim_coords", 2),
             dim_seeds=flat_cfg.get("dim_seeds", 1),

@@ -430,13 +430,6 @@ def save_image_with_label_overlay(im: np.ndarray,
     imageio.imwrite(os.path.join(output_dir, f'{base_name}_overlay.png'), im_overlay)
 
 
-def display_cells_and_nuclei(lab):
-    """Display cells and nuclei labels as a colored overlay."""
-    display = save_image_with_label_overlay(torch.zeros((lab.shape[-2], lab.shape[-1], 3)), lab, return_image=True,
-                                            label_boundary_mode=None, alpha=1)
-    return display
-
-
 def display_colourized(mIF, random_seed=0):
     """Convert a multi-channel image to a colorized RGB display."""
     from instanseg.utils.augmentations import Augmentations
@@ -456,21 +449,18 @@ def _display_overlay(im, lab):
     """Create an overlay of labels on an image for display."""
     assert lab.ndim == 4, "lab must be 4D"
     assert im.ndim == 3, "im must be 3D"
-    output_dimension = lab.shape[1]
-
     im_for_display = display_colourized(im)
+    if lab.shape[1] != 1:
+        raise ValueError(f"Expected one cell-segmentation channel, got {lab.shape}")
 
-    if output_dimension == 1:  # Nucleus or cell mask
-        labels_for_display = lab[0, 0].cpu().numpy()  # Shape is 1,H,W
-        image_overlay = save_image_with_label_overlay(im_for_display, lab=labels_for_display, return_image=True,
-                                                      label_boundary_mode="thick", label_colors=None, thickness=10,
-                                                      alpha=0.5)
-    elif output_dimension == 2:  # Nucleus and cell mask
-        nuclei_labels_for_display = lab[0, 0].cpu().numpy()
-        cell_labels_for_display = lab[0, 1].cpu().numpy()  # Shape is 1,H,W
-        image_overlay = save_image_with_label_overlay(im_for_display, lab=nuclei_labels_for_display, return_image=True,
-                                                      label_boundary_mode="thick", label_colors="red", thickness=10)
-        image_overlay = save_image_with_label_overlay(image_overlay, lab=cell_labels_for_display, return_image=True,
-                                                      label_boundary_mode="inner", label_colors="green", thickness=1)
-    return image_overlay
+    labels_for_display = lab[0, 0].cpu().numpy()
+    return save_image_with_label_overlay(
+        im_for_display,
+        lab=labels_for_display,
+        return_image=True,
+        label_boundary_mode="thick",
+        label_colors=None,
+        thickness=10,
+        alpha=0.5,
+    )
 

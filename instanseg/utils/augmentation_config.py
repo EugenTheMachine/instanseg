@@ -1,4 +1,5 @@
 import collections
+import warnings
 
 def get_augmentation_dict(dim_in,nuclei_channel,amount,pixel_size=0.5, augmentation_type="minimal", mean_diameter = None):
 
@@ -6,7 +7,7 @@ def get_augmentation_dict(dim_in,nuclei_channel,amount,pixel_size=0.5, augmentat
     This function returns the augmentation dictionary for the training and test sets.
 
     Args:
-        image_modality (str): The image modality. Options are ["Brightfield","Fluorescence","Chromogenic"]
+        image_modality (str): Brightfield or phase-contrast microscopy.
         dim_in (int): The number of input channels
         nuclei_channel (int): The channel that contains the nuclei
         amount (float): The amount of augmentation to apply (between 0 and 1)
@@ -17,7 +18,12 @@ def get_augmentation_dict(dim_in,nuclei_channel,amount,pixel_size=0.5, augmentat
     
     """
 
-    channel_invariance = (dim_in is None or dim_in <= 0)
+    if nuclei_channel is not None:
+        warnings.warn(
+            "nuclei_channel is deprecated and ignored; only cell segmentation is supported.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     if mean_diameter is not None:
          mean_diameter_heavy = (mean_diameter,2**(-2),2**(2))
@@ -36,28 +42,13 @@ def get_augmentation_dict(dim_in,nuclei_channel,amount,pixel_size=0.5, augmentat
                     ("torch_rescale", [1,pixel_size, mean_diameter_light]),#in microns per pixel
                     ("flips", [1]),#Probability
                     ("rotate", [1]),#Probability
-                ]),
-                "Fluorescence": collections.OrderedDict([
-                    ("to_tensor", [1]),
-                    ("normalize", [1]), #Probability
-                    ("torch_rescale", [1,pixel_size, mean_diameter_light]),#in microns per pixel,
-                    ("channel_subsample", [0, (5 if channel_invariance else dim_in , 20 if channel_invariance else dim_in)]),  #proba,(min,max) #(1, 1)]), #
-                    ("flips", [1]),
-                    ("rotate", [1]),
-                ]) 
+                ])
             },
             "test": {
                 "Brightfield": collections.OrderedDict([
                     ("to_tensor", [1]),
                     ("normalize", [1]), #Probability
                     ("torch_rescale", [1,pixel_size, mean_diameter_light]),#in microns per pixel
-                    ("flips", [1])
-                ]),
-                "Fluorescence": collections.OrderedDict([
-                    ("to_tensor", [1]),
-                    ("normalize", [1]), #Probability
-                    ("torch_rescale", [1,pixel_size, mean_diameter_light]),#in microns per pixel
-                    ("channel_subsample", [0, (5 if channel_invariance else dim_in , 20 if channel_invariance else dim_in)]),  #proba,(min,max)  (1, 1)]), #
                     ("flips", [1])
                 ])
             }
@@ -76,28 +67,13 @@ def get_augmentation_dict(dim_in,nuclei_channel,amount,pixel_size=0.5, augmentat
                     ("flips", [1]),#Probability
                     ("rotate", [1]),#Probability
                     ("kornia_base_augmentations", [1]),
-                ]),
-                "Fluorescence": collections.OrderedDict([
-                    ("to_tensor", [1]),
-                    ("normalize", [1]), #Probability
-                    ("torch_rescale", [1,pixel_size, mean_diameter_light]),#in microns per pixel,
-                    ("channel_subsample", [0, (5 if channel_invariance else dim_in , 20 if channel_invariance else dim_in)]),  #proba,(min,max) #(1, 1)]), #
-                    ("flips", [1]),
-                    ("rotate", [1]),
-                ]) 
+                ])
             },
             "test": {
                 "Brightfield": collections.OrderedDict([
                     ("to_tensor", [1]),
                     ("normalize", [1]), #Probability
                     ("torch_rescale", [1,pixel_size, mean_diameter_light]),#in microns per pixel
-                    ("flips", [1])
-                ]),
-                "Fluorescence": collections.OrderedDict([
-                    ("to_tensor", [1]),
-                    ("normalize", [1]), #Probability
-                    ("torch_rescale", [1,pixel_size, mean_diameter_light]),#in microns per pixel
-                    ("channel_subsample", [0, (5 if channel_invariance else dim_in , 20 if channel_invariance else dim_in)]),  #proba,(min,max)  (1, 1)]), #
                     ("flips", [1])
                 ])
             }
@@ -129,27 +105,7 @@ def get_augmentation_dict(dim_in,nuclei_channel,amount,pixel_size=0.5, augmentat
                     ("flips", [1]),#Probability
                     ("rotate", [1]),#Probability
                     ("kornia_base_augmentations", [1]),
-                ]),
-                "Fluorescence": collections.OrderedDict([
-                    ("to_tensor", [1]),
-                    ("normalize", [1]), #Probability
-                    ("torch_rescale", [1,pixel_size, mean_diameter_heavy]),#in microns per pixel
-                    ("pseudo_brightfield", [0, nuclei_channel]),
-                    ("randomJPEGcompression", [0.2, amount]),
-                    ("extract_nucleus_and_cytoplasm_channels", [0.05, amount]),
-                    ("pseudo_imc", [0, amount]),
-                    ("colourize", [0.1, nuclei_channel]),
-                   # ("draw_shapes", [0.05, amount]),
-                    ("flips", [1]),
-                    ("rotate", [1]),
-                    ("perspective", [0, amount]),
-                    ("add_gradient", [0.05, amount]),
-                    ("brightness_augment", [0.2, amount]),
-                    ("RandGaussianNoise", [0.1, amount]),
-                    ("HistogramNormalize", [0.1, amount]),
-                    ("add_noisy_channels", [0.3, 5]),#Probability/ max total channels
-                    ("channel_suppress", [1, 0.3]),  #proba, supression_factor
-                ]) 
+                ])
             },
             "test": {
                 "Brightfield": collections.OrderedDict([
@@ -163,82 +119,15 @@ def get_augmentation_dict(dim_in,nuclei_channel,amount,pixel_size=0.5, augmentat
                     ("normalize", [1]), #Probability
                     ("torch_rescale", [1,pixel_size, mean_diameter_light]),#in microns per pixel
                     ("flips", [1])
-                ]),
-                "Fluorescence": collections.OrderedDict([
-                    ("to_tensor", [1]),
-                    ("normalize", [1]), #Probability
-                    ("torch_rescale", [1,pixel_size, mean_diameter_light]),#in microns per pixel
-                    ("pseudo_brightfield", [0, nuclei_channel]),
-                    ("extract_nucleus_and_cytoplasm_channels", [0, amount]),
-                   # ("channel_subsample", [0, (5 if channel_invariance else dim_in , 20 if channel_invariance else dim_in)]),  #proba,(min,max)  (1, 1)]), #
-                    ("colourize", [0, nuclei_channel]),
-                    ("flips", [1])
-
                 ])
             }
         }
 
 
-    elif augmentation_type == "two_channel":
-            
-        augmentation_dict = {
-            "train": {
-                "Brightfield": collections.OrderedDict([
-                    ("to_tensor", [1]), #Probability
-                ]),
-                "Fluorescence": collections.OrderedDict([
-                    ("to_tensor", [1]),
-                    ("normalize", [1]), #Probability
-                    ("torch_rescale", [1,pixel_size, 0]),#in microns per pixel
-                    ("extract_nucleus_and_cytoplasm_channels", [1, amount]),
-                    ("flips", [1]),
-                    ("rotate", [1]),
-                ]) 
-            },
-            "test": {
-                "Brightfield": collections.OrderedDict([
-                    ("to_tensor", [1]),
-                ]),
-                "Fluorescence": collections.OrderedDict([
-                    ("to_tensor", [1]),
-                    ("normalize", [1]), #Probability
-                    ("torch_rescale", [1,pixel_size, 0]),#in microns per pixel
-                    ("extract_nucleus_and_cytoplasm_channels", [1, amount]),
-                    ("flips", [1])
-                ])
-            }
-        }
-
-
-    elif augmentation_type == "colourize":
-            
-        augmentation_dict = {
-            "train": {
-                "Brightfield": collections.OrderedDict([
-                    ("to_tensor", [1]), #Probability
-                ]),
-                "Fluorescence": collections.OrderedDict([
-                    ("to_tensor", [1]),
-                    ("normalize", [1]), #Probability
-                    ("torch_rescale", [1,pixel_size, 0]),#in microns per pixel
-                    ("colourize", [1, nuclei_channel]),
-                    ("flips", [1]),
-                    ("rotate", [1]),
-                ]) 
-            },
-            "test": {
-                "Brightfield": collections.OrderedDict([
-                    ("to_tensor", [1]),
-                ]),
-                "Fluorescence": collections.OrderedDict([
-                    ("to_tensor", [1]),
-                    ("normalize", [1]), #Probability
-                    ("torch_rescale", [1,pixel_size, 0]),#in microns per pixel
-                    ("colourize", [1, nuclei_channel]),
-                    ("flips", [1])
-                ])
-            }
-        }
+    elif augmentation_type in {"two_channel", "colourize"}:
+        raise ValueError(
+            f"Augmentation type {augmentation_type!r} is unavailable; only brightfield and phase-contrast cell segmentation is supported."
+        )
 
 
     elif augmentation_type == "brightfield_only":
@@ -260,21 +149,7 @@ def get_augmentation_dict(dim_in,nuclei_channel,amount,pixel_size=0.5, augmentat
                         ("brightness_augment", [0.2, amount]),#Probability/Amount
                         ("RandGaussianNoise", [0.2, amount]),#Probability/Amount
                         ("perspective", [0.1, amount]),#Probability/Amount
-                    ]),
-                    "Fluorescence": collections.OrderedDict([
-                        ("to_tensor", [1]),
-                        ("normalize", [1]), #Probability
-                        ("torch_rescale", [1,pixel_size, 0]),#in microns per pixel
-                        ("pseudo_brightfield", [1, nuclei_channel]),
-                        ("randomJPEGcompression", [0.2, amount]),
-                        ("adjust_hue", [0.2, amount]),#Probability/Amount
-                        ("AdjustContrast", [0.2, amount]),#Probability/Amount
-                        ("flips", [1]),
-                        ("rotate", [1]),
-                        ("brightness_augment", [0.2, amount]),
-                        ("RandGaussianNoise", [0.1, amount]),
-                        ("HistogramNormalize", [0.1, amount]),
-                    ]) 
+                    ])
                 },
                 "test": {
                     "Brightfield": collections.OrderedDict([
@@ -282,20 +157,22 @@ def get_augmentation_dict(dim_in,nuclei_channel,amount,pixel_size=0.5, augmentat
                         ("normalize", [1]), #Probability
                         ("torch_rescale", [1,pixel_size, 0]),#in microns per pixel
                         ("flips", [1])
-                    ]),
-                    "Fluorescence": collections.OrderedDict([
-                        ("to_tensor", [1]),
-                        ("normalize", [1]), #Probability
-                        ("torch_rescale", [1,pixel_size, 0]),#in microns per pixel
-                        ("pseudo_brightfield", [1, nuclei_channel]),
-                        ("flips", [1])
                     ])
                 }
             }
         
+    elif augmentation_type in {"two_channel", "colourize"}:
+        raise ValueError(
+            f"Augmentation type {augmentation_type!r} is unavailable; only brightfield and phase-contrast cell segmentation is supported."
+        )
     else:
-        raise ValueError("Invalid augmentation type. Options are ['minimal','heavy','brightfield_only']")
-        
+        raise ValueError(
+            "Invalid augmentation type. Supported options are 'minimal', 'kornia_intensity', 'heavy', and 'brightfield_only'."
+        )
+
+    for split in augmentation_dict.values():
+        if "phase-contrast" not in split:
+            split["phase-contrast"] = collections.OrderedDict(split["Brightfield"])
 
     return augmentation_dict
 

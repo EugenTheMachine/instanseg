@@ -1,6 +1,7 @@
 from typing import Union, List, Optional, Tuple
 import numpy as np
 import torch
+import warnings
 from torch import nn
 from torch.nn.functional import interpolate
 from pathlib import Path, PosixPath
@@ -395,14 +396,9 @@ class InstanSeg():
 
             labels = _to_ndim(labels, 4)
         
-            output_dimension = labels.shape[1]
             from instanseg.utils.utils import labels_to_features
             import json
-            if output_dimension == 1:
-                features = labels_to_features(labels[0,0],object_type = "detection")
-
-            elif output_dimension == 2:
-                features = labels_to_features(labels[0,0],object_type = "detection",classification="Nuclei")["features"] + labels_to_features(labels[0,1],object_type = "detection",classification = "Cells")["features"]
+            features = labels_to_features(labels[0, 0], object_type="detection")
             
             geojson = json.dumps(features)
 
@@ -474,18 +470,15 @@ class InstanSeg():
                 image = _to_ndim(image, 4)
                 image = torch.stack([percentile_normalize(i) for i in image]) #over the batch dimension
 
-        if target != "all_outputs" and self.instanseg.cells_and_nuclei:
-            assert target in ["nuclei", "cells"], "Target must be 'nuclei', 'cells' or 'all_outputs'."
-            if target == "nuclei":
-                target_segmentation = torch.tensor([1,0])
-            else:
-                target_segmentation = torch.tensor([0,1])
-        else:
-            target_segmentation = torch.tensor([1,1])
+        if target != "all_outputs":
+            warnings.warn(
+                "target is deprecated and ignored; inference returns cell segmentation only.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         with torch.amp.autocast('cuda'):
             instanseg_kwargs = _filter_kwargs(self.instanseg, kwargs)
-            instanseg_kwargs["target_segmentation"] = target_segmentation
 
             instances = self.instanseg(image, **instanseg_kwargs)
 
@@ -560,20 +553,15 @@ class InstanSeg():
         if normalise:
             image = percentile_normalize(image, subsampling_factor=normalisation_subsampling_factor)
             
-        output_dimension = 2 if self.instanseg.cells_and_nuclei else 1
-
-        if target != "all_outputs" and output_dimension == 2:
-            assert target in ["nuclei", "cells"], "Target must be 'nuclei', 'cells' or 'all_outputs'."
-            if target == "nuclei":
-                target_segmentation = torch.tensor([1,0])
-            else:
-                target_segmentation = torch.tensor([0,1])
-            output_dimension = 1
-        else:
-            target_segmentation = torch.tensor([1,1])
+        output_dimension = 1
+        if target != "all_outputs":
+            warnings.warn(
+                "target is deprecated and ignored; inference returns cell segmentation only.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         instanseg_kwargs = _filter_kwargs(self.instanseg, kwargs)
-        instanseg_kwargs["target_segmentation"] = target_segmentation
 
 
         instances = _sliding_window_inference(image,
@@ -651,7 +639,7 @@ class InstanSeg():
 
             slide = self.read_slide(image)
 
-            n_dim = 2 if instanseg.cells_and_nuclei else 1
+            n_dim = 1
             model_pixel_size = instanseg.pixel_size
 
             new_stem = Path(image).stem + self.prediction_tag
@@ -820,20 +808,19 @@ class InstanSeg():
 
         im_for_display = _display_colourized(image.squeeze(),normalise = normalise)
  
-        output_dimension = instances.shape[1]
- 
-        if output_dimension ==1: #Nucleus or cell mask
-            labels_for_display = instances[0,0] #Shape is 1,H,W
-            image_overlay = save_image_with_label_overlay(im_for_display,lab=labels_for_display,return_image=True, label_boundary_mode="thick", label_colors=None,thickness=10,alpha=0.9)
-        elif output_dimension ==2: #Nucleus and cell mask
-            nuclei_labels_for_display = instances[0,0]
-            cell_labels_for_display = instances[0,1] #Shape is 1,H,W
-            image_overlay = save_image_with_label_overlay(im_for_display,lab=nuclei_labels_for_display,return_image=True, label_boundary_mode="thick", label_colors="red",thickness=10)
-            image_overlay = save_image_with_label_overlay(image_overlay,lab=cell_labels_for_display,return_image=True, label_boundary_mode="inner", label_colors="green",thickness=1)
- 
-        else:
-            raise ValueError(f"Output dimension {instances.shape} not supported")
-        return image_overlay
+        if instances.shape[1] != 1:
+            raise ValueError(f"Expected one cell-segmentation channel, got {instances.shape}")
+
+        labels_for_display = instances[0, 0]
+        return save_image_with_label_overlay(
+            im_for_display,
+            lab=labels_for_display,
+            return_image=True,
+            label_boundary_mode="thick",
+            label_colors=None,
+            thickness=10,
+            alpha=0.9,
+        )
 
     def _cluster_instances_by_mean_channel_intensity(self, image_tensor: torch.Tensor, 
                                                      labeled_output: torch.Tensor,

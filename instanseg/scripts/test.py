@@ -7,6 +7,7 @@ import argparse
 import fastremap
 import time
 import numpy as np
+import warnings
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-d_p", "--data_path", type=str, default=r"../datasets")
@@ -21,7 +22,8 @@ parser.add_argument("-data", "--dataset", type=str, default="segmentation", help
 parser.add_argument('-source', '--source_dataset', default=None, type=str)
 parser.add_argument('-o_h', '--optimize_hyperparameters', default=False, type=lambda x: (str(x).lower() == 'true'),help="Optimize postprocessing parameters")
 parser.add_argument('-tta', '--tta', default=False, type=lambda x: (str(x).lower() == 'true'),help="Test time augmentations")
-parser.add_argument('-target', '--target_segmentation', default=None, type=str,help=" Cells or nuclei or both? Accepts: C,N, NC")
+parser.add_argument('-target', '--target_segmentation', default=None, type=str,
+                    help="Deprecated and ignored; evaluation always uses cell masks.")
 parser.add_argument('-params', '--params', default="default", type=str, help="Either 'default' or 'best_params'")
 parser.add_argument('-window', '--window_size', default=128, type=int)
 parser.add_argument('-set', '--test_set', default="Validation", type=str, help = "Validation or Test or Train")
@@ -165,6 +167,12 @@ if __name__ == "__main__":
     from instanseg.utils.augmentations import Augmentations
 
     parser_args = parser.parse_args()
+    if parser_args.target_segmentation is not None:
+        warnings.warn(
+            "target_segmentation is deprecated and ignored; evaluation always uses cell masks.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     if parser_args.model_folder == "None":
         parser_args.model_folder = ""
 
@@ -187,21 +195,10 @@ if __name__ == "__main__":
         method = InstanSeg(binary_loss_fn_str=model_dict["binary_loss_fn"], 
                            seed_loss_fn=model_dict["seed_loss_fn"],
                            n_sigma=model_dict["n_sigma"],
-                           cells_and_nuclei=model_dict["cells_and_nuclei"],
                            window_size=parser_args.window_size, 
                            dim_coords=model_dict["dim_coords"],
                            dim_seeds= model_dict["dim_seeds"],
                            feature_engineering_function=model_dict["feature_engineering"])
-
-        if parser_args.target_segmentation is None:
-            parser_args.cells_and_nuclei = model_dict["cells_and_nuclei"]
-            parser_args.target_segmentation = model_dict["target_segmentation"]
-
-        else:
-            if len(parser_args.target_segmentation) == 2:
-                parser_args.cells_and_nuclei = True
-            else:
-                parser_args.cells_and_nuclei = False
 
         parser_args.pixel_size = model_dict["pixel_size"]
 
@@ -362,19 +359,8 @@ if __name__ == "__main__":
 
     pd.DataFrame(time_dict['combined']).to_csv(output_path / "timing_dict.csv", header=True)
 
-    if parser_args.cells_and_nuclei:
-        pred_nuclei_masks = [pred_mask[0] for gt_mask, pred_mask in zip(gt_masks, pred_masks) if gt_mask[0].min() >= 0]
-        gt_nuclei_masks = [gt_mask[0] for gt_mask, pred_mask in zip(gt_masks, pred_masks) if gt_mask[0].min() >= 0]
-
-        pred_cell_masks = [pred_mask[1] for gt_mask, pred_mask in zip(gt_masks, pred_masks) if gt_mask[1].min() >= 0]
-        gt_cell_masks = [gt_mask[1] for gt_mask, pred_mask in zip(gt_masks, pred_masks) if gt_mask[1].min() >= 0]
-
-        compute_and_export_metrics(gt_nuclei_masks, pred_nuclei_masks, output_path, target="Nuclei")
-        compute_and_export_metrics(gt_cell_masks, pred_cell_masks, output_path, target="Cells")
-    else:
-        pred_masks = [(pred_mask).squeeze()[None] for gt_mask, pred_mask in zip(gt_masks, pred_masks) if
-                      gt_mask.min() >= 0]
-        gt_masks = [(gt_mask).squeeze()[None] for gt_mask, pred_mask in zip(gt_masks, pred_masks) if gt_mask.min() >= 0]
-        compute_and_export_metrics(gt_masks, pred_masks, output_path,
-                                   target="Cells" if parser_args.target_segmentation == "C" else "Nuclei")
+    pred_masks = [(pred_mask).squeeze()[None] for gt_mask, pred_mask in zip(gt_masks, pred_masks) if
+                  gt_mask.min() >= 0]
+    gt_masks = [(gt_mask).squeeze()[None] for gt_mask, pred_mask in zip(gt_masks, pred_masks) if gt_mask.min() >= 0]
+    compute_and_export_metrics(gt_masks, pred_masks, output_path, target="Cells")
 

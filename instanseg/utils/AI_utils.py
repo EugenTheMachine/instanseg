@@ -169,14 +169,27 @@ class Segmentation_Dataset():
                 augmentation_dict=None,
                 dim_in=3, 
                 debug=False, 
-                cells_and_nuclei=False, 
-                target_segmentation="N", 
+                cells_and_nuclei=None,
+                target_segmentation=None,
                 channel_invariant = False,
                 random_seed = None):
         
         self.X = img
         self.Y = label
         self.common_transforms = common_transforms
+
+        if cells_and_nuclei is not None:
+            warnings.warn(
+                "cells_and_nuclei is deprecated and ignored; only cell segmentation is supported.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if target_segmentation is not None:
+            warnings.warn(
+                "target_segmentation is deprecated and ignored; only cell segmentation is supported.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         assert len(self.X) == len(self.Y), "The number of images and labels must be the same"
         if len(metadata) == 0:
@@ -190,8 +203,6 @@ class Segmentation_Dataset():
                                        debug=debug, 
                                        shape=self.size,
                                        dim_in=dim_in, 
-                                       cells_and_nuclei=cells_and_nuclei,
-                                       target_segmentation=target_segmentation, 
                                        channel_invariant = channel_invariant,
                                        random_seed = random_seed)
 

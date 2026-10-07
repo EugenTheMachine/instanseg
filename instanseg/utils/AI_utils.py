@@ -168,9 +168,8 @@ class Segmentation_Dataset():
                 size=(256, 256), 
                 augmentation_dict=None,
                 dim_in=3, 
+                *,
                 debug=False, 
-                cells_and_nuclei=None,
-                target_segmentation=None,
                 channel_invariant = False,
                 random_seed = None):
         
@@ -178,26 +177,13 @@ class Segmentation_Dataset():
         self.Y = label
         self.common_transforms = common_transforms
 
-        if cells_and_nuclei is not None:
-            warnings.warn(
-                "cells_and_nuclei is deprecated and ignored; only cell segmentation is supported.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        if target_segmentation is not None:
-            warnings.warn(
-                "target_segmentation is deprecated and ignored; only cell segmentation is supported.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         assert len(self.X) == len(self.Y), "The number of images and labels must be the same"
-        if len(metadata) == 0:
+        if not metadata:
             self.metadata = [None] * len(self.X)
         else:
             self.metadata = metadata
 
-        assert len(self.X) == len(self.metadata), print("The number of images and metadata must be the same")
+        assert len(self.X) == len(self.metadata), "The number of images and metadata must be the same"
         self.size = size
         self.Augmenter = Augmentations(augmentation_dict=augmentation_dict, 
                                        debug=debug, 

@@ -3,7 +3,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 import sys
-import warnings
 from torch import nn
 import torch
 import torch.optim as optim
@@ -25,10 +24,6 @@ parser.add_argument("-e_s", "--experiment_str", type=str, default="my_first_inst
 parser.add_argument("-d", "--device", type=str, default=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
 parser.add_argument('-num_workers', '--num_workers', default=3, type=int, help = "Number of CPU cores to use for data loading")
 parser.add_argument('-ci', '--channel_invariant', default=False, type=lambda x: (str(x).lower() == 'true'), help = "Whether to add a channel invariant model to the pipeline")
-parser.add_argument('-target', '--target_segmentation', default=None, type=str,
-                    help="Deprecated and ignored; training always uses cell masks.")
-parser.add_argument('--cells_and_nuclei', default=None, type=lambda x: str(x).lower() == 'true',
-                    help="Deprecated and ignored; training always uses cell masks.")
 parser.add_argument('-pixel_size', '--requested_pixel_size', default=None, type=float, help = "Requested pixel size to rescale the input images")
 
 #advanced usage
@@ -156,16 +151,6 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
         else:
             raise ValueError(f"Argument {key} not recognized")
 
-    for key in ("target_segmentation", "cells_and_nuclei"):
-        if getattr(args, key) is not None:
-            warnings.warn(
-                f"{key} is deprecated and ignored; training always uses cell masks.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            delattr(args, key)
-
-       
     from instanseg.utils.utils import plot_average, _choose_device
     from instanseg.utils.model_loader import build_model_from_dict, load_model_weights
     from instanseg.utils.data_loader import _read_images_from_pth, get_loaders

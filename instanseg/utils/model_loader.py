@@ -1,5 +1,4 @@
 import numpy as np
-import warnings
 
 
 def build_monai_model(model_str: str, build_model_dictionary: dict):
@@ -109,10 +108,9 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
         if key in build_model_dictionary
     ]
     if legacy_mode_keys:
-        warnings.warn(
-            f"{', '.join(legacy_mode_keys)} is deprecated and ignored; only cell segmentation is supported.",
-            DeprecationWarning,
-            stacklevel=2,
+        raise ValueError(
+            f"Unsupported segmentation mode configuration: {', '.join(legacy_mode_keys)}. "
+            "This version supports cell segmentation only; remove these keys."
         )
     #set seed 
     if random_seed is not None:

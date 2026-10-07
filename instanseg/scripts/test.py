@@ -7,7 +7,6 @@ import argparse
 import fastremap
 import time
 import numpy as np
-import warnings
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-d_p", "--data_path", type=str, default=r"../datasets")
@@ -22,8 +21,6 @@ parser.add_argument("-data", "--dataset", type=str, default="segmentation", help
 parser.add_argument('-source', '--source_dataset', default=None, type=str)
 parser.add_argument('-o_h', '--optimize_hyperparameters', default=False, type=lambda x: (str(x).lower() == 'true'),help="Optimize postprocessing parameters")
 parser.add_argument('-tta', '--tta', default=False, type=lambda x: (str(x).lower() == 'true'),help="Test time augmentations")
-parser.add_argument('-target', '--target_segmentation', default=None, type=str,
-                    help="Deprecated and ignored; evaluation always uses cell masks.")
 parser.add_argument('-params', '--params', default="default", type=str, help="Either 'default' or 'best_params'")
 parser.add_argument('-window', '--window_size', default=128, type=int)
 parser.add_argument('-set', '--test_set', default="Validation", type=str, help = "Validation or Test or Train")
@@ -167,12 +164,6 @@ if __name__ == "__main__":
     from instanseg.utils.augmentations import Augmentations
 
     parser_args = parser.parse_args()
-    if parser_args.target_segmentation is not None:
-        warnings.warn(
-            "target_segmentation is deprecated and ignored; evaluation always uses cell masks.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
     if parser_args.model_folder == "None":
         parser_args.model_folder = ""
 
@@ -279,12 +270,6 @@ if __name__ == "__main__":
                                             requested_pixel_size=parser_args.pixel_size,
                                             modality=val_meta[i]["image_modality"], crop=False) for i, (img, label) in
                     enumerate(val_data)]
-
-    # val_data = [Augmenter.colourize(img,label,c_nuclei = val_meta[i]['nuclei_channels'][0]) for i, (img,label) in enumerate(val_data)]
-
-    # from instanseg.utils.augmentations import get_marker_location
-    # val_meta = [get_marker_location(meta) for meta in val_meta]
-    # val_data = [Augmenter.extract_nucleus_and_cytoplasm_channels(img,label,c_nuclei = val_meta[i]['nuclei_channels'][0],metadata = val_meta[i]) for i, (img,label) in enumerate(val_data)]
 
     val_images = [item[0] for item in val_data]  #[::-1]
     val_labels = [item[1] for item in val_data]  #[::-1]

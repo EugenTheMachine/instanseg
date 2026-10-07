@@ -296,6 +296,15 @@ class InstanSeg():
         :return: A torch.Tensor of outputs if the input is a path to a single image, or a list of such outputs if the input is a list of paths, or None if the input is a whole slide image.
         """
 
+        unsupported_mode_args = {
+            "target", "target_segmentation", "cells_and_nuclei", "resolve_cell_and_nucleus"
+        }.intersection(kwargs)
+        if unsupported_mode_args:
+            raise TypeError(
+                f"{', '.join(sorted(unsupported_mode_args))} is not supported; "
+                "inference returns cell segmentation only."
+            )
+
         if isinstance(image, PosixPath):
             image = str(image)
         if isinstance(image, str):
@@ -426,7 +435,7 @@ class InstanSeg():
                          pixel_size: Optional[float] = None,
                          normalise: bool = True,
                          return_image_tensor: bool = True,
-                         target: str = "all_outputs", #or "nuclei" or "cells"
+                         *,
                          rescale_output: bool = True,
                          **kwargs) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
@@ -436,7 +445,6 @@ class InstanSeg():
         :param pixel_size: The pixel size of the image, in microns. If not provided, it will be read from the image metadata.
         :param normalise: Controls whether the image is normalised.
         :param return_image_tensor: Controls whether the input image is returned as part of the output.
-        :param target: Controls what type of output is given, usually "all_outputs", "nuclei", or "cells".
         :param rescale_output: Controls whether the outputs should be rescaled to the same coordinate space as the input (useful if the pixel size is different to that of the InstanSeg model being used).
         :param kwargs: Passed to pytorch.
         
@@ -448,19 +456,27 @@ class InstanSeg():
 
         image = _to_ndim(image, 4)
 
+        unsupported_mode_args = {
+            "target", "target_segmentation", "cells_and_nuclei", "resolve_cell_and_nucleus"
+        }.intersection(kwargs)
+        if unsupported_mode_args:
+            raise TypeError(
+                f"{', '.join(sorted(unsupported_mode_args))} is not supported; "
+                "inference returns cell segmentation only."
+            )
+
         if "channel_ids" in kwargs:
             assert max(kwargs["channel_ids"]) <= image.shape[1], f"Number of channel ids {(kwargs['channel_ids'])} does not match number of channels in image {image.shape[1]}."
             image = image[:,kwargs["channel_ids"]]
 
         original_shape = image.shape
 
+        img_has_been_rescaled = False
         if pixel_size is not None:
             image = _rescale_to_pixel_size(image, pixel_size, self.instanseg.pixel_size)
 
             if original_shape[-2] != image.shape[-2] or original_shape[-1] != image.shape[-1]:
                 img_has_been_rescaled = True
-            else:
-                img_has_been_rescaled = False
 
         image = image.to(self.inference_device)
 
@@ -469,13 +485,6 @@ class InstanSeg():
         if normalise:
                 image = _to_ndim(image, 4)
                 image = torch.stack([percentile_normalize(i) for i in image]) #over the batch dimension
-
-        if target != "all_outputs":
-            warnings.warn(
-                "target is deprecated and ignored; inference returns cell segmentation only.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
         with torch.amp.autocast('cuda'):
             instanseg_kwargs = _filter_kwargs(self.instanseg, kwargs)
@@ -501,7 +510,7 @@ class InstanSeg():
                           batch_size: int = 1,
                           return_image_tensor: bool = True,
                           normalisation_subsampling_factor: int = 1,
-                          target: str = "all_outputs", #or "nuclei" or "cells"
+                          *,
                           rescale_output: bool = True,
                           **kwargs) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
@@ -514,7 +523,6 @@ class InstanSeg():
         :param batch_size: The number of tiles to be run simultaneously.
         :param return_image_tensor: Controls whether the input image is returned as part of the output.
         :param normalisation_subsampling_factor: The subsampling or downsample factor at which to calculate normalisation parameters.
-        :param target: Controls what type of output is given, usually "all_outputs", "nuclei", or "cells".
         :param rescale_output: Controls whether the outputs should be rescaled to the same coordinate space as the input (useful if the pixel size is different to that of the InstanSeg model being used).
         :param kwargs: Passed to pytorch.
         
@@ -527,6 +535,15 @@ class InstanSeg():
         image = _to_tensor_float32(image)
         image = _to_ndim(image, 4)
 
+        unsupported_mode_args = {
+            "target", "target_segmentation", "cells_and_nuclei", "resolve_cell_and_nucleus"
+        }.intersection(kwargs)
+        if unsupported_mode_args:
+            raise TypeError(
+                f"{', '.join(sorted(unsupported_mode_args))} is not supported; "
+                "inference returns cell segmentation only."
+            )
+
         if "channel_ids" in kwargs:
             assert max(kwargs["channel_ids"]) <= image.shape[1], f"Number of channel ids {(kwargs['channel_ids'])} does not match number of channels in image {image.shape[1]}."
             image = image[:,kwargs["channel_ids"]]
@@ -536,6 +553,7 @@ class InstanSeg():
         original_shape = image.shape
         original_ndim = image.dim()
 
+        img_has_been_rescaled = False
         if pixel_size is None:
             import warnings
             warnings.warn("Pixel size not provided, this may lead to innacurate results.")
@@ -544,8 +562,6 @@ class InstanSeg():
 
             if original_shape[-2] != image.shape[-2] or original_shape[-1] != image.shape[-1]:
                 img_has_been_rescaled = True
-            else:
-                img_has_been_rescaled = False
         
 
         image = _to_ndim(image, 3)
@@ -554,12 +570,6 @@ class InstanSeg():
             image = percentile_normalize(image, subsampling_factor=normalisation_subsampling_factor)
             
         output_dimension = 1
-        if target != "all_outputs":
-            warnings.warn(
-                "target is deprecated and ignored; inference returns cell segmentation only.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
         instanseg_kwargs = _filter_kwargs(self.instanseg, kwargs)
 
@@ -617,6 +627,15 @@ class InstanSeg():
             :param kwargs: Passed to pytorch.
             :return: Returns a zarr file with the segmentation. The zarr file is saved in the same directory as the image with the same name but with the extension .zarr.
             """
+
+            unsupported_mode_args = {
+                "target", "target_segmentation", "cells_and_nuclei", "resolve_cell_and_nucleus"
+            }.intersection(kwargs)
+            if unsupported_mode_args:
+                raise TypeError(
+                    f"{', '.join(sorted(unsupported_mode_args))} is not supported; "
+                    "inference returns cell segmentation only."
+                )
 
             memory_block_size = tile_size,tile_size
 

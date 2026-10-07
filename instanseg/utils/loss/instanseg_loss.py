@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 import pdb
-import warnings
 
 from einops import rearrange
 from typing import Tuple, List, Union
@@ -649,7 +648,7 @@ class InstanSeg(nn.Module):
                  device: str = 'cuda', 
                  binary_loss_fn_str: str = "lovasz_hinge", 
                  seed_loss_fn = "binary_xloss", 
-                 cells_and_nuclei=None,
+                 *,
                  window_size = 256, 
                  feature_engineering_function = "0",
                  bg_weight = None,
@@ -667,12 +666,6 @@ class InstanSeg(nn.Module):
         self.dim_out = self.dim_coords + self.n_sigma + self.dim_seeds
         self.parameters_have_been_updated = False
 
-        if cells_and_nuclei is not None:
-            warnings.warn(
-                "cells_and_nuclei is deprecated and ignored; only cell segmentation is supported.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self.window_size = window_size
         self.num_instance_cap = 50
         self.bg_weight = bg_weight
@@ -811,13 +804,8 @@ class InstanSeg(nn.Module):
 
         loss = 0
 
-        if instances.shape[1] > 1:
-            warnings.warn(
-                "Multiple label channels are deprecated; only the last (cell) channel will be used.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            instances = instances[:, -1:]
+        if instances.shape[1] != 1:
+            raise ValueError(f"Expected one cell-label channel, got {instances.shape[1]}.")
 
         for mask_channel in range(0, instances.shape[1]):
 
@@ -1183,7 +1171,7 @@ class IdentityTransform:
 from typing import Dict, Optional
 class InstanSeg_Torchscript(nn.Module):
     def __init__(self, model, 
-                 cells_and_nuclei=None,
+                 *,
                  pixel_size : float = 0, 
                  n_sigma: int = 2, 
                  dim_coords:int = 2, 
@@ -1208,12 +1196,6 @@ class InstanSeg_Torchscript(nn.Module):
             self.pixel_classifier = model.pixel_classifier
         except:
             self.pixel_classifier = model.model.pixel_classifier
-        if cells_and_nuclei is not None:
-            warnings.warn(
-                "cells_and_nuclei is deprecated and ignored; only cell segmentation is supported.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self.pixel_size = pixel_size
         self.dim_coords = dim_coords
         self.dim_seeds = dim_seeds
@@ -1222,11 +1204,10 @@ class InstanSeg_Torchscript(nn.Module):
         self.params = params or {}
         self.index_dtype = torch.long #torch.int
 
-        if "target_segmentation" in self.params:
-            warnings.warn(
-                "target_segmentation is deprecated and ignored; only cell segmentation is supported.",
-                DeprecationWarning,
-                stacklevel=2,
+        unsupported_mode_keys = {"target_segmentation", "resolve_cell_and_nucleus", "cells_and_nuclei"}.intersection(self.params)
+        if unsupported_mode_keys:
+            raise ValueError(
+                f"Unsupported segmentation mode parameters: {', '.join(sorted(unsupported_mode_keys))}."
             )
         self.default_min_size = self.params.get('min_size', 10)
         self.default_mask_threshold = self.params.get('mask_threshold', 0.53)
@@ -1241,7 +1222,6 @@ class InstanSeg_Torchscript(nn.Module):
 
     def forward(self, x: torch.Tensor,
                 args: Optional[Dict[str, torch.Tensor]] = None,
-                target_segmentation: Optional[torch.Tensor] = None,
                 min_size: Optional[int] = None,
                 mask_threshold: Optional[float] = None,
                 peak_distance: Optional[int] = None,
@@ -1251,7 +1231,6 @@ class InstanSeg_Torchscript(nn.Module):
                 fg_threshold: Optional[float] = None,
                 window_size: Optional[int] = None,
                 cleanup_fragments: Optional[bool] = None,
-                resolve_cell_and_nucleus: Optional[bool] = None,
                 precomputed_seeds: torch.Tensor = torch.tensor([]),
                 ) -> torch.Tensor:
         
@@ -1264,27 +1243,13 @@ class InstanSeg_Torchscript(nn.Module):
         fg_threshold = float(fg_threshold) if fg_threshold is not None else self.default_fg_threshold
         window_size = int(window_size) if window_size is not None else self.default_window_size
         cleanup_fragments = bool(cleanup_fragments) if cleanup_fragments is not None else self.default_cleanup_fragments
-        if target_segmentation is not None:
-            warnings.warn(
-                "target_segmentation is deprecated and ignored; only cell segmentation is supported.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        if resolve_cell_and_nucleus is not None:
-            warnings.warn(
-                "resolve_cell_and_nucleus is deprecated and ignored; only cell segmentation is supported.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         if args is None:
             args = {"None": torch.tensor([0])}
 
-        if "target_segmentation" in args:
-            warnings.warn(
-                "target_segmentation is deprecated and ignored; only cell segmentation is supported.",
-                DeprecationWarning,
-                stacklevel=2,
+        unsupported_mode_keys = {"target_segmentation", "resolve_cell_and_nucleus", "cells_and_nuclei"}.intersection(args)
+        if unsupported_mode_keys:
+            raise ValueError(
+                f"Unsupported segmentation mode parameters: {', '.join(sorted(unsupported_mode_keys))}."
             )
         min_size = int(args.get('min_size', torch.tensor(float(min_size))).item())
         mask_threshold = args.get('mask_threshold', torch.tensor(mask_threshold)).item()
@@ -1295,12 +1260,6 @@ class InstanSeg_Torchscript(nn.Module):
         fg_threshold = args.get('fg_threshold', torch.tensor(fg_threshold)).item()
         window_size = int(args.get('window_size', torch.tensor(float(window_size))).item())
         cleanup_fragments = args.get('cleanup_fragments', torch.tensor(cleanup_fragments)).item()
-        if "resolve_cell_and_nucleus" in args:
-            warnings.warn(
-                "resolve_cell_and_nucleus is deprecated and ignored; only cell segmentation is supported.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         precomputed_seeds = args.get('precomputed_seeds', precomputed_seeds)
 
         torch.clamp_max_(x, 3) #Safety check, please normalize inputs properly!

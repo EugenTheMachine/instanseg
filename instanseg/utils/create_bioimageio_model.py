@@ -1,5 +1,4 @@
 import os
-import warnings
 import bioimageio.core
 import numpy as np
 import torch
@@ -162,12 +161,8 @@ def export_bioimageio(torchsript: torch.jit._script.RecursiveScriptModule,
         step = 0
 
 
-    if "target_segmentation" in model_dict:
-        warnings.warn(
-            "target_segmentation is deprecated and ignored; exports contain cell segmentation only.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+    if "target_segmentation" in model_dict or "cells_and_nuclei" in model_dict:
+        raise ValueError("Cannot export a model with unsupported segmentation-mode metadata.")
     if output_channel_names is None:
         output_channel_names = ["cells"]
         print("Assuming output channel names: ", output_channel_names)

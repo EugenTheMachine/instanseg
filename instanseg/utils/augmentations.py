@@ -71,11 +71,9 @@ class Augmentations(object):
     def __init__(self, augmentation_dict={},
                  shape=(256, 256), 
                  dim_in=3,
-                 nuclei_channel=None,
+                 *,
                  debug=False, 
                  modality=None, 
-                 cells_and_nuclei=None,
-                 target_segmentation=None,
                  channel_invariant = False,
                  random_seed=None):
         
@@ -83,24 +81,6 @@ class Augmentations(object):
         self.shape = shape
         self.augmentation_dict = augmentation_dict
         self.modality = modality
-        if cells_and_nuclei is not None:
-            warnings.warn(
-                "cells_and_nuclei is deprecated and ignored; only cell segmentation is supported.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        if target_segmentation is not None:
-            warnings.warn(
-                "target_segmentation is deprecated and ignored; only cell segmentation is supported.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        if nuclei_channel is not None:
-            warnings.warn(
-                "nuclei_channel is deprecated and ignored; only brightfield and phase-contrast cell segmentation is supported.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self.dim_in = dim_in  # Note, this is the number of input channels to the model, not the number of channels in the raw image. (Can be 'None' for channel invariant models)
         self.channel_invariant = channel_invariant
 

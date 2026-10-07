@@ -1,7 +1,6 @@
 import os
 import copy
 import random
-import warnings
 import yaml
 import torch
 import numpy as np
@@ -83,17 +82,14 @@ def _flatten_config(config: Dict[str, Any]) -> Dict[str, Any]:
     flat["dim_out"] = flat.get("dim_out", 6)
     flat["dropprob"] = flat.get("dropout", 0.0)
     flat["layers"] = flat.get("layers", (32, 64, 128, 256))
-    deprecated_mode_keys = [
+    unsupported_mode_keys = [
         key for key in ("cells_and_nuclei", "target_segmentation") if key in flat
     ]
-    if deprecated_mode_keys:
-        warnings.warn(
-            f"{', '.join(deprecated_mode_keys)} is deprecated and ignored; only cell segmentation is supported.",
-            DeprecationWarning,
-            stacklevel=2,
+    if unsupported_mode_keys:
+        raise ValueError(
+            f"Unsupported segmentation mode configuration: {', '.join(unsupported_mode_keys)}. "
+            "This version supports cell segmentation only; remove these keys."
         )
-        for key in deprecated_mode_keys:
-            flat.pop(key)
     flat["multihead"] = flat.get("multihead", False)
     flat["dim_seeds"] = flat.get("dim_seeds", 1)
     flat["dim_coords"] = flat.get("dim_coords", 2)
@@ -173,6 +169,8 @@ class InstanSegModel:
             "type": ("optimizer", "type"),
         }
         for k, v in kwargs.items():
+            if k in {"target_segmentation", "cells_and_nuclei"}:
+                raise ValueError(f"{k} is not supported; this version performs cell segmentation only.")
             if v is None:
                 continue
             if k in section_mapping:

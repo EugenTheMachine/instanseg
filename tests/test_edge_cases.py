@@ -118,11 +118,10 @@ class TestCellOnlyInference:
         result = instance.eval_small_image(image, normalise=False, return_image_tensor=False)
         assert result.shape == (1, 1, 32, 32)
 
-        with pytest.warns(DeprecationWarning, match="returns cell segmentation only"):
-            result = instance.eval_small_image(
+        with pytest.raises(TypeError, match="target is not supported"):
+            instance.eval_small_image(
                 image, normalise=False, target="nuclei", return_image_tensor=False
             )
-        assert result.shape == (1, 1, 32, 32)
 
 
 class TestMediumImageTiling:

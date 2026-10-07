@@ -439,7 +439,8 @@ def download_model(model_str: str, version: Optional[str] = None, verbose: bool 
         if os.path.isdir(output_path) and os.path.exists(path_to_torchscript_model) and not force:
             if verbose:
                 print(f"Model {model['name']} version {model['version']} already downloaded in {bioimageio_path}, loading")
-            return torch.jit.load(path_to_torchscript_model)
+            with open(path_to_torchscript_model, "rb") as f:
+                return torch.jit.load(f)
 
         response = requests.get(url)
         response.raise_for_status()  # Raise an error for bad responses
@@ -450,7 +451,8 @@ def download_model(model_str: str, version: Optional[str] = None, verbose: bool 
         if verbose:
             print(f"Model {model['name']} version {model['version']} downloaded and extracted to {bioimageio_path}")
 
-        return torch.jit.load(path_to_torchscript_model)
+        with open(path_to_torchscript_model, "rb") as f:
+            return torch.jit.load(f)
 
     else:
         # load model locally

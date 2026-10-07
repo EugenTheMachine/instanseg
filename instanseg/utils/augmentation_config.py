@@ -1,7 +1,6 @@
 import collections
-import warnings
 
-def get_augmentation_dict(dim_in,nuclei_channel,amount,pixel_size=0.5, augmentation_type="minimal", mean_diameter = None):
+def get_augmentation_dict(dim_in, amount, *, pixel_size=0.5, augmentation_type="minimal", mean_diameter=None):
 
     """
     This function returns the augmentation dictionary for the training and test sets.
@@ -9,7 +8,6 @@ def get_augmentation_dict(dim_in,nuclei_channel,amount,pixel_size=0.5, augmentat
     Args:
         image_modality (str): Brightfield or phase-contrast microscopy.
         dim_in (int): The number of input channels
-        nuclei_channel (int): The channel that contains the nuclei
         amount (float): The amount of augmentation to apply (between 0 and 1)
         minmax (tuple): The min and max values instance surface area to rescale the image to. If None, rescaling is done on a per image basis.
     
@@ -17,13 +15,6 @@ def get_augmentation_dict(dim_in,nuclei_channel,amount,pixel_size=0.5, augmentat
     values under the labels is darker than the mean pixel values of the background. If so, the image is assumed to be brightfield.
     
     """
-
-    if nuclei_channel is not None:
-        warnings.warn(
-            "nuclei_channel is deprecated and ignored; only cell segmentation is supported.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
 
     if mean_diameter is not None:
          mean_diameter_heavy = (mean_diameter,2**(-2),2**(2))

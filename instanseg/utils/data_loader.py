@@ -26,6 +26,15 @@ def _is_supported_modality(item):
 
 def _keep_images(item, args):
 
+    unsupported_mode_keys = [
+        key for key in ("target_segmentation", "cells_and_nuclei")
+        if hasattr(args, key)
+    ]
+    if unsupported_mode_keys:
+        raise ValueError(
+            f"Unsupported segmentation mode arguments: {', '.join(unsupported_mode_keys)}."
+        )
+
     #args.source_dataset = str(args.source_dataset).lower().replace("[","").replace("]","").replace("'","").split(",")
 
     if args.source_dataset != ["all"] and item[
@@ -41,14 +50,7 @@ def _keep_images(item, args):
         return True
     
  
-def _format_labels(item, target_segmentation=None):
-    if target_segmentation is not None:
-        warnings.warn(
-            "target_segmentation is deprecated and ignored; only cell segmentation is supported.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
+def _format_labels(item):
     if "cell_masks" not in item:
         return np.full(item["image"].shape[-2:], -1, dtype=np.int32)
 
@@ -437,20 +439,15 @@ def get_loaders(train_images_local, train_labels_local, val_images_local, val_la
     import random
 
     for key in ("target_segmentation", "cells_and_nuclei"):
-        if getattr(args, key, None) is not None:
-            warnings.warn(
-                f"{key} is deprecated and ignored; data loading always uses cell masks.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
+        if hasattr(args, key):
+            raise ValueError(f"{key} is not supported; data loading always uses cell masks.")
 
     seed_val = getattr(args, "seed", None) or getattr(args, "rng_seed", None) or 42
     torch.manual_seed(seed_val)
     generator = torch.Generator()
     generator.manual_seed(seed_val)
 
-    augmentation_dict = get_augmentation_dict(args.dim_in, 
-                                              nuclei_channel=None, 
+    augmentation_dict = get_augmentation_dict(args.dim_in,
                                               amount=args.transform_intensity,
                                               pixel_size=args.requested_pixel_size,
                                               mean_diameter=args.mean_object_diameter, 

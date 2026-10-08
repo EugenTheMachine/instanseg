@@ -1,5 +1,4 @@
 import torch
-import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
@@ -12,7 +11,6 @@ from instanseg.utils.utils import show_images
 import warnings
 
 
-global_step = 0
 def train_epoch(train_model, 
                 train_device, 
                 train_dataloader, 
@@ -20,8 +18,6 @@ def train_epoch(train_model,
                 train_optimizer, 
                 args,
                 ):
-    
-    global global_step
     start = time.time()
     train_model.train()
     train_loss = []
@@ -54,7 +50,6 @@ def train_epoch(train_model,
     return np.mean(train_loss), end - start
     
 
-global_step_test = 0
 def test_epoch(test_model, 
                test_device, 
                test_dataloader, 
@@ -67,7 +62,6 @@ def test_epoch(test_model,
                save_str=None, 
                save_bool=False,
                best_f1=None):
-    global global_step_test
     start = time.time()
 
     test_model.eval()
@@ -95,8 +89,6 @@ def test_epoch(test_model,
             else:
                 warnings.warn("Labels are of type float, not int. Not calculating F1.")
                 current_f1_list.append(0)
-
-            global_step_test += 1
 
     f1_array = np.array(current_f1_list)  # either N,2 or N,
 
@@ -215,38 +207,6 @@ class Segmentation_Dataset():
         return data.float(), label
 
 
-
-def plot_loss(_model):
-    loss_fig = plt.figure()
-    timer = loss_fig.canvas.new_timer(interval=300000)
-    timer.add_callback(plt.close)
-
-    losses = [param.grad.norm().item() for name, param in _model.named_parameters() if param.grad is not None]
-    names = [name for name, param in _model.named_parameters() if param.grad is not None]
-
-    plt.plot(losses)
-    plt.xticks(np.arange(len(names))[::1], names[::1])
-    plt.xticks(fontsize=8, rotation=90)
-    spacing = 0.5
-    loss_fig.subplots_adjust(bottom=spacing)
-    timer.start()
-    plt.show()
-
-
-
-def check_max_grad(_model):
-    losses = np.array([param.grad.norm().item() for name, param in _model.named_parameters() if param.grad is not None])
-    return losses.max()
-
-
-def check_min_grad(_model):
-    losses = np.array([param.grad.norm().item() for name, param in _model.named_parameters() if param.grad is not None])
-    return losses.min()
-
-
-def check_mean_grad(_model):
-    losses = np.array([param.grad.norm().item() for name, param in _model.named_parameters() if param.grad is not None])
-    return losses.mean()
 
 def optimize_hyperparameters(model,postprocessing_fn,
                               data_loader = None, 

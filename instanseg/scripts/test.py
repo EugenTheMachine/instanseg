@@ -324,22 +324,7 @@ if __name__ == "__main__":
                                                           instanseg=instanseg,
                                                           tta=parser_args.tta)
     
-    # if parser_args.test_set == "Test":
-    #     for i,pred in enumerate(pred_masks):
-    #         meta = val_meta[i]
-    #         source_dataset = meta['parent_dataset']
 
-    #         path = f'/home/thibaut_goldsborough/Documents/Projects/Segmentation_benchmarks/BEN/{source_dataset}/{source_dataset}/test/'
-    #         name = meta['name'].split('.')[0]
-
-    #         if not parser_args.tta:
-    #             outpath = (path + name + '_INSTANSEG_PREDICTION.tiff')
-    #         else:
-    #             outpath = (path + name + '_INSTANSEG_TTA_PREDICTION.tiff')
-
-    #         import tifffile
-    #         print("Saving to", outpath)
-    #         tifffile.imwrite(outpath, pred)
 
 
     pd.DataFrame(time_dict['combined']).to_csv(output_path / "timing_dict.csv", header=True)

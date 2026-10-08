@@ -106,8 +106,7 @@ class InstanSeg():
             try:
                 from tiffslide import TiffSlide
             except Exception as e:
-                print(e)
-                raise ImportError("tiffslide is not installed. Please use an installed image reader or run `pip install tiffslide>=2.4.0`")
+                raise ImportError("tiffslide is not installed. Please use an installed image reader or run `pip install tiffslide>=2.4.0` ") from e
 
             slide = TiffSlide(image_str)
             img_pixel_size = slide.properties['tiffslide.mpp-x']
@@ -125,8 +124,7 @@ class InstanSeg():
             try:
                 from skimage.io import imread
             except Exception as e:
-                print(e)
-                raise ImportError("skimage.io is not installed. Please use an installed image reader or run `scikit-image>=0.21.0`")
+                raise ImportError("skimage.io is not installed. Please use an installed image reader or run `scikit-image>=0.21.0` ") from e
 
             assert processing_method != "wsi", "skimage.io does not support whole slide images."
             image_array = imread(image_str)
@@ -136,8 +134,7 @@ class InstanSeg():
             try:
                 from bioio import BioImage
             except Exception as e:
-                print(e)
-                raise ImportError("bioio is not installed. Please use an installed image reader or run `pip install bioio>=1.0.0`")
+                raise ImportError("bioio is not installed. Please use an installed image reader or run `pip install bioio>=1.0.0` ") from e
 
             slide = BioImage(image_str)
             img_pixel_size = slide.physical_pixel_sizes.X
@@ -154,12 +151,11 @@ class InstanSeg():
                 from bioio import BioImage
                 import bioio_bioformats
             except Exception as e:
-                print(e)
                 raise ImportError("bioio and bioio_bioformats are not installed. \
                      Please use an installed image reader or run: \
                     `pip install bioio>=1.0.0` \
                     and `pip install bioio-bioformats>=0.9.0` \
-                    and  pip install bioio-ome-tiff>=1.0.0")
+                    and  pip install bioio-ome-tiff>=1.0.0") from e
                 
 
             slide = BioImage(image_str, reader=bioio_bioformats.Reader)
@@ -180,7 +176,6 @@ class InstanSeg():
             img_pixel_size = self.read_pixel_size(image_str)
 
         if img_pixel_size is not None:
-            import warnings
             if float(img_pixel_size) <= 0 or float(img_pixel_size) > 2:
                 warnings.warn(f"Pixel size {img_pixel_size} microns per pixel is invalid.")
                 img_pixel_size = None
@@ -199,8 +194,7 @@ class InstanSeg():
             img_pixel_size = slide.properties['tiffslide.mpp-x']
             if img_pixel_size is not None and img_pixel_size > 0 and img_pixel_size < 2:
                 return img_pixel_size
-        except Exception as e:
-            print(e)
+        except Exception:
             pass
         
         try:
@@ -209,8 +203,7 @@ class InstanSeg():
             img_pixel_size = slide.physical_pixel_sizes.X
             if img_pixel_size is not None and img_pixel_size > 0 and img_pixel_size < 2:
                 return img_pixel_size
-        except Exception as e:
-            print(e)
+        except Exception:
             pass
 
         try:
@@ -222,10 +215,9 @@ class InstanSeg():
             if img_pixel_size is not None and img_pixel_size > 0 and img_pixel_size < 2:
                     
                 return img_pixel_size
-        except Exception as e:
-            print(e)
+        except Exception:
             pass
-        print("Could not read pixel size from image metadata.")
+        warnings.warn("Could not read pixel size from image metadata.")
         
         return None
     
@@ -248,16 +240,6 @@ class InstanSeg():
         """
         if self.prefered_image_reader == "tiffslide":
             slide = TiffSlide(image_str)
-        # elif self.prefered_image_reader == "AICSImageIO":
-        #     from aicsimageio import AICSImage
-        #     slide = AICSImage(image_str)
-        # elif self.prefered_image_reader == "bioio":
-        #     from bioio import BioImage
-        #     slide = BioImage(image_str)
-        # elif self.prefered_image_reader == "slideio":
-        #     import slideio
-        #     slide = slideio.open_slide(image_str, driver = "AUTO")
-
         else:
             raise NotImplementedError(f"Image reader {self.prefered_image_reader} is not implemented for whole slide images.")
         return slide
@@ -840,81 +822,6 @@ class InstanSeg():
             thickness=10,
             alpha=0.9,
         )
-
-    def _cluster_instances_by_mean_channel_intensity(self, image_tensor: torch.Tensor, 
-                                                     labeled_output: torch.Tensor,
-                                                     features: Optional[torch.Tensor] = None,
-                                                      n_neighbors = 50,
-                                                      n_pcs = 100,
-                                                    resolution = 0.1,
-                                                    min_dist = 0.5,
-                                                     device = "cuda",
-                                                     channel_names = None,
-                                                     normalise = True):
-
-        #This is experimental code that is not yet implemented. You'll need to install rapids_singlecell, cuml and scanpy to run this code.
-
-        from instanseg.utils.biological_utils import get_mean_object_features
-        import fastremap
-        import numpy as np
-        from instanseg.utils.utils import apply_cmap, _choose_device
-        from instanseg.utils.pytorch_utils import torch_fastremap
-        try:
-            import rapids_singlecell as rsc
-        except ImportError:
-            import warnings
-            warnings.warn("rapids_singlecell not installed. Not using GPU.")
-            import scanpy as rsc
-
-        import scanpy as sc
-        import matplotlib.pyplot as plt
-
-        device = _choose_device(device, verbose= False)
-
-        labeled_output = _to_ndim(labeled_output, 4)
-        image_tensor = _to_ndim(image_tensor, 3)
-
-        if features is None:
-            X_features = get_mean_object_features( image_tensor.to(device), labeled_output.to(device),)
-        else:
-            X_features = features
-
-        adata = sc.AnnData(X_features.cpu().numpy())
-        try:
-            rsc.get.anndata_to_GPU(adata)
-        except:
-            pass
-
-        if channel_names is not None:
-            adata.var_names = channel_names
-
-        if normalise:    
-            rsc.pp.scale(adata)
-            
-        rsc.pp.neighbors(adata, n_neighbors=n_neighbors, n_pcs=n_pcs)
-        rsc.tl.umap(adata,min_dist=min_dist)
-        rsc.tl.leiden(adata, resolution=resolution)
-
-        # Create the UMAP plot
-        fig, axes = plt.subplots(1, 2, figsize=(15, 7))
-        mapping = fastremap.component_map(np.arange(1, len(adata.obs["leiden"]) + 1), adata.obs["leiden"].astype(np.int64) + 1)
-        labs = torch_fastremap(labeled_output[0, 0])
-        labels = fastremap.remap(labs.numpy(), mapping, preserve_missing_labels=True)
-
-        labels_disp = apply_cmap(labels, labels > 0, cmap="tab10")
-
-        # Show the labeled image
-        axes[0].imshow(labels_disp)
-        axes[0].set_title('Labeled Image')
-        axes[0].axis('off')
-
-        sc.pl.umap(adata, color="leiden", legend_loc='on data', cmap="tab10", title='UMAP with Leiden Clustering', s=30, ax=axes[1], show = False)
-        axes[1].axis('off')
-        plt.subplots_adjust(wspace=0., hspace=0)
-        plt.show()
-
-        return adata
-
 
 
 def _threshold_thumbnail(slide, level=None, sigma = 3):

@@ -954,7 +954,6 @@ def load_CPDMI_Vectra(Segmentation_Dataset: dict):
     import kornia as K
     import torch
     import numpy as np
-    import pdb
     import os
 
     base_path= create_raw_datasets_dir("Cell_Segmentation","CPDMI_2023")

@@ -220,8 +220,6 @@ def _zarr_to_json_export(path_to_zarr, detection_size = 30, size = 1024, scale =
         classes = ["Nucleus","Cell"]
 
 
-  #  breakpoint()
-
     previously_seen = {}
     for i in range(n_dim):
         previously_seen[i] = []

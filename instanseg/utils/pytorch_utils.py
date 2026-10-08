@@ -50,17 +50,6 @@ def remap_values_safe(remapping: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     return out.view_as(x)
 
 
-# def torch_fastremap(x: torch.Tensor) -> torch.Tensor:
-#    # if x.max() == 0:
-#    #     return x
-#   #  fg = x[x > 0]
-#     unique_values = torch.unique(fg, sorted=True)
-#     new_values = torch.arange(len(unique_values), dtype=x.dtype, device=x.device)
-#     remapping = torch.stack((unique_values, new_values))
-#     fg = remap_values(remapping, fg)
-#     x[x > 0] = fg + 1
-#     return x
-
 def torch_fastremap(x: torch.Tensor) -> torch.Tensor:
     if x.max() == 0:
         return x
@@ -305,9 +294,6 @@ def torch_sparse_onehot(x: torch.Tensor, flatten: bool = False) -> Tuple[torch.T
     return sparse_onehot, unique_values
 
 
-import pdb
-
-
 def fast_sparse_dual_iou(onehot1: torch.Tensor, onehot2: torch.Tensor) -> torch.Tensor:
     """
     Returns the (dense) intersection over union between two sparse onehot encoded tensors
@@ -501,8 +487,6 @@ def get_masked_patches(lab: torch.Tensor, image: torch.Tensor, patch_size: int =
     # canvas = torch.ones_like(image_patches) * (~mask_patches).float()
 
     # image_patches = image_patches * mask_patches.float() + canvas
-
-   # pdb.set_trace()
 
     return image_patches,mask_patches  # N,C,patch_size,patch_size
 

@@ -120,11 +120,7 @@ def get_image(img_object):
                 import os
                 print("Inflating zip file")
 
-                print((str(Path(img_path).parents[1]) + ".zip"))
-
                 shutil.unpack_archive(str(Path(img_path).parents[1]) + ".zip", Path(img_path).parents[2])
-            
-            #breakpoint()
             img = tifffile.imread(img_path)
             return img
     else:
@@ -179,7 +175,6 @@ def _read_images_from_path(data_path= "../datasets",
                     data_dicts[_set][0].append(image)
                     data_dicts[_set][1].append(mask)
                     data_dicts[_set][2].append(meta)
-                  #  breakpoint()
 
 
     return_list = []
@@ -189,7 +184,6 @@ def _read_images_from_path(data_path= "../datasets",
         assert len(data_dicts[_set][0]) > 0, "No images in the dataset meet the requirements. (Hint: Check that the source argument is correct)"
     
     return return_list
-   # breakpoint()
 
 
 def _read_images_from_pth(data_path= "../datasets", dataset = "segmentation", data_slice = None, dummy = False, args = None, sets = ["Train","Validation"], complete_dataset = None):

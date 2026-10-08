@@ -6,8 +6,6 @@ import torch.nn as nn
 
 from collections.abc import Sequence
 
-import pdb
-
 from instanseg.utils.utils import show_images
 
 from einops import rearrange, repeat
@@ -224,9 +222,6 @@ if __name__ == "__main__":
     import torch
     import matplotlib.pyplot as plt
     import torch.nn.functional as F
-
-
-    import pdb
 
     #  B batch size, C channels, H height, W width
     input_size = (2, 4, 256, 256)

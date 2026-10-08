@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-import pdb
 
 from einops import rearrange
 from typing import Tuple, List, Union
@@ -111,60 +110,6 @@ def torch_peak_local_max(image: torch.Tensor, neighbourhood_size: int, minimum_v
     # Non-zero causes host-device synchronization, which is a bottleneck
     return torch.nonzero(peak_local_max.squeeze()).to(dtype)
 
-def torch_peak_local_max_LEGACY(image: torch.Tensor, neighbourhood_size: int, minimum_value: float, return_map: bool = False) -> torch.Tensor:
-    """
-    computes peak local maxima function for an image (or batch of images), returning a maxima mask
-    and the coordinates of the peak local max values.
-    peak local maxima returns a image that is zero at all points other than local maxima.
-    At the local maxima, the pixel retains its value in the original image.
-    
-    image: a torch tensor of shape [B,1,H,W] or [H,W], B is batch size. H,W are spatial dims.
-    neighbourhood_size: int. Only one maximum will be selected within a square patch of width
-        equal to the neighbourhood size (specifically the largest maxima in that neighbourhood).
-        Where there are multiple local maxima with the largest value within the neighbourhood,
-        the maxima furthest away from the origin (furthest by euclidian distance from pixel (0,0))
-        is retained (ensuring there is only one maximum per neighbourhood).
-    minimum_value: float. Local maxima with pixel intensity below this value are ignored.
-    
-    returns: a torch tensor of shape equal to image, a list of length B containing (lx, ly) pairs
-    where lx and ly are torch tensors containing the x and y coordinates of each local maxima for a given image.
-    if image has shape [H,W], returns (lx, ly). 
-    """
-    assert image.ndim == 2, "image must be of shape [H,W]"
-
-    h, w = image.shape
-    image = image.view(1, 1, h, w)
-    device = image.device
-
-    all_local_maxima = find_all_local_maxima(image, neighbourhood_size, minimum_value)
-
-    # perform non-maximal coordinate suppression to only get one maximum per neighbourhood.
-    # specifically, where there are two maxima in a neighbourhood, I retain the maxima
-    # which has the furthest euclidian distance away from the origin. This is just an
-    # 'arbitrary' way for me to split the ties. 
-    spatial_dims = [image.shape[-2], image.shape[-1]]
-
-    grid = torch.stack(
-        torch.meshgrid(
-            torch.arange(0, spatial_dims[0], 1, device=device, dtype = torch.float32), torch.arange(0, spatial_dims[1], 1, device=device, dtype = torch.float32),
-            indexing='ij'
-        )
-    )
-
-    distance_to_origin = (grid.unsqueeze(0)).square().sum(dim=1).sqrt()
-
-    distance_of_max_poses = torch.mul(all_local_maxima, distance_to_origin)
-
-    retained_maxima = find_all_local_maxima(distance_of_max_poses, neighbourhood_size, minimum_value=minimum_value)
-    peak_local_max = all_local_maxima * (retained_maxima > minimum_value)
-
-    if return_map:
-        return peak_local_max
-
-    locs = grid[:,peak_local_max.squeeze()>0].T.int()
-
-
-    return locs
 
 #@torch.jit.script
 def centre_crop(centroids: torch.Tensor, window_size: int, h:int, w:int) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -236,31 +181,6 @@ def compute_crops( x: torch.Tensor,
     return x, iidd
 
 
-
-def find_connected_components_legacy(adjacency_matrix: torch.Tensor, num_iterations: int = 10) -> torch.Tensor:
-
-    M = (adjacency_matrix + torch.eye(adjacency_matrix.shape[0],
-                               device=adjacency_matrix.device))  # https://math.stackexchange.com/questions/1106870/can-i-find-the-connected-components-of-a-graph-using-matrix-operations-on-the-gr
-    num_iterations = 10#10
-
-    out = torch.matrix_power(M, num_iterations)
-
-    if torch.isinf(out).any() or torch.isnan(out).any():
-        print("Warning: overflow detected in adjacency matrix. Too many seeds detected")
-
-    
-    col = torch.arange(0, out.shape[0], device=out.device).view(-1, 1).expand(out.shape[0], out.shape[
-        0])  # Just a column matrix with numbers from 0 to out.shape[0]
-    out_col_idx = ((out > 1).int() - torch.eye(out.shape[0], device=out.device)) * col
-    maxes = out_col_idx.argmax(0) * (out_col_idx.max(0)[0] > 0).int()
-    maxes = torch.maximum(maxes + 1, (torch.arange(0, out.shape[0],
-                                                    device=out.device) + 1))  # recover the diagonal elements that were suppressed
-    tentative_remapping = torch.stack(((torch.arange(0, out.shape[0], device=out.device) + 1), maxes))
-    # start with two zeros:
-    remapping = torch.cat((torch.zeros(2, 1, device=tentative_remapping.device), tentative_remapping),
-                            dim=1)  # Maybe this can be avoided in the future by thresholding labels
-    
-    return remapping
 @torch.jit.script
 def find_connected_components(adjacency_matrix: torch.Tensor, max_iterations: int = 100) -> torch.Tensor:
     """
@@ -399,20 +319,6 @@ def merge_sparse_predictions(x: torch.Tensor,
 
     return labels
 
-def guide_function(params: torch.Tensor,device ='cuda', width: int = 256):
-
-    #params must be depth,3  
-
-    depth = params.shape[0]
-    xx = torch.linspace(0, 1, width, device=device).view(1, 1, -1).expand(1, width,width)
-    yy = torch.linspace(0, 1, width, device=device).view(1, -1, 1).expand(1, width, width)
-    xxyy  = torch.cat((xx, yy), 0).expand(depth,2,width,width)
-
-    xx = xxyy[:,0] * params[:,0][:,None,None]
-    yy = xxyy[:,1] * params[:,1][:,None,None]
-
-    return torch.sin(xx+yy+params[:,2,None,None])[None]
-
 
 def generate_coordinate_map(mode: str = "linear", spatial_dim: int = 2, height: int = 256, width: int = 256, device: torch.device = torch.device(type='cuda')):
 
@@ -462,44 +368,6 @@ class ProbabilityNet(nn.Module):
             return torch.relu_(x)
 
 
-
-class MyBlock(nn.Sequential):
-    def __init__(self, embedding_dim, width):
-        super(MyBlock, self).__init__()
-        self.fc1 = nn.Conv2d(embedding_dim, width, 1, padding = 0//2)
-        self.bn1 = nn.BatchNorm2d(width)
-        self.relu1 = nn.ReLU(inplace = True)
-        self.fc2 = nn.Conv2d(width, width, 1)
-        self.bn2 = nn.BatchNorm2d(width)
-        self.relu2 = nn.ReLU(inplace = True)
-        self.fc3 = nn.Conv2d(width, 1 , 1)
-
-
-class ConvProbabilityNet(nn.Module):
-    def __init__(self, embedding_dim=4, width = 5, depth = 5):
-        super().__init__()
-        self.layer1 = MyBlock(embedding_dim + depth,width)
-        self.layer2 = MyBlock(embedding_dim ,width)
-        self.layer3 = MyBlock(embedding_dim + 2 ,width)
-        
-        self.positional_embedding_params = (nn.Parameter(torch.rand(depth,3)*10) ).to("cuda")
-
-    
-
-    def forward(self, x):
-        # x is C*H*W,E+S+1 (H,W is the window of the crop used here, e.g 100x100, not the image)
-
-        positional_embedding = guide_function(self.positional_embedding_params, width = 100)
-
-        one = self.layer1(torch.cat((x,positional_embedding.expand(x.shape[0],-1,-1,-1)),dim=1))
-        two = self.layer2(x)
-
-        output = self.layer3(torch.cat((x,one,two),dim=1))
-
-        return output
-    
-
-
 def feature_engineering(x: torch.Tensor, c: torch.Tensor, sigma: torch.Tensor, window_size: int,
                         mesh_grid_flat: torch.Tensor):
     
@@ -547,98 +415,11 @@ def feature_engineering_slow(x: torch.Tensor, c: torch.Tensor, sigma: torch.Tens
 
 
 
-def feature_engineering_2(x: torch.Tensor, xxyy: torch.Tensor, c: torch.Tensor, sigma: torch.Tensor, window_size: int,
-                        mesh_grid_flat: torch.Tensor):
-    
-    # EXTRA DIFF
-    E = x.shape[0]
-    h, w = x.shape[-2:]
-    C = c.shape[0]
-    S = sigma.shape[0]
-
-    x_slices = x[:, mesh_grid_flat[0], mesh_grid_flat[1]].reshape(E, C, 2 * window_size, 2 * window_size).permute(1, 0, 2,3)  # C,E,2*window_size,2*window_size
-    sigma_slices = sigma[:, mesh_grid_flat[0], mesh_grid_flat[1]].reshape(S, C, 2 * window_size, 2 * window_size).permute(1,
-                                                                                                                          0,
-                                                                                                                          2,
-                                                                                                                          3)  # C,S,2*window_size,2*window_size
-    c_shaped = c.reshape(-1, E, 1, 1)
-
-    norm = torch.sqrt(torch.sum(torch.pow(x_slices - c_shaped, 2) + 1e-6, dim=1, keepdim=True))  # C,1,H,W
-
-    diff = x_slices - c_shaped
-
-
-    x = torch.cat([diff, sigma_slices, norm], dim=1)  # C,E+S+1,H,W
-
-    x = x.flatten(2).permute(0, -1, 1)  # C,H*W,E+S+1
-    x = x.reshape((x.shape[0] * x.shape[1]), x.shape[2])  # C*H*W,E+S+1
-
-    return x
-
-def feature_engineering_3(x: torch.Tensor, xxyy: torch.Tensor, c: torch.Tensor, sigma: torch.Tensor, window_size: int,
-                        mesh_grid_flat: torch.Tensor):
-    
-    # NO SIGMA
-    E = x.shape[0]
-    h, w = x.shape[-2:]
-    C = c.shape[0]
-    S = sigma.shape[0]
-
-    x_slices = x[:, mesh_grid_flat[0], mesh_grid_flat[1]].reshape(E, C, 2 * window_size, 2 * window_size).permute(1, 0, 2,
-                                                                                                                  3)  # C,E,2*window_size,2*window_size
-    sigma_slices = sigma[:, mesh_grid_flat[0], mesh_grid_flat[1]].reshape(S, C, 2 * window_size, 2 * window_size).permute(1,
-                                                                                                                          0,
-                                                                                                                          2,
-                                                                                                                          3)  # C,S,2*window_size,2*window_size
-    c_shaped = c.reshape(-1, E, 1, 1)
-
-    diff = x_slices - c_shaped
-
-
-    x = torch.cat([diff, sigma_slices * 0], dim=1)  # C,E+S+1,H,W
-
-    x = x.flatten(2).permute(0, -1, 1)  # C,H*W,E+S+1
-    x = x.reshape((x.shape[0] * x.shape[1]), x.shape[2])  # C*H*W,E+S+1
-
-    return x
-
-
-
-
-def feature_engineering_10(x: torch.Tensor, xxyy: torch.Tensor, c: torch.Tensor, sigma: torch.Tensor, window_size: int,
-                        mesh_grid_flat: torch.Tensor):
-    
-    # CONV
-    E = x.shape[0]
-    h, w = x.shape[-2:]
-    C = c.shape[0]
-    S = sigma.shape[0]
-
-    x_slices = x[:, mesh_grid_flat[0], mesh_grid_flat[1]].reshape(E, C, 2 * window_size, 2 * window_size).permute(1, 0, 2,
-                                                                                                                  3)  # C,E,2*window_size,2*window_size
-    sigma_slices = sigma[:, mesh_grid_flat[0], mesh_grid_flat[1]].reshape(S, C, 2 * window_size, 2 * window_size).permute(1,
-                                                                                                                          0,
-                                                                                                                          2,
-                                                                                                                          3)  # C,S,2*window_size,2*window_size
-    c_shaped = c.reshape(-1, E, 1, 1)
-    diff = x_slices - c_shaped
-    x = torch.cat([diff, sigma_slices], dim=1)  # C,E+S+1,H,W
-
-    return x
-
 def feature_engineering_generator(feature_engineering_function):
-
-    if feature_engineering_function == "0" or feature_engineering_function == "7":
+    if feature_engineering_function in {"0", "7"}:
         return feature_engineering, 2
-    elif feature_engineering_function == "2":
-        return feature_engineering_2, 3
-    elif feature_engineering_function == "3":
-        return feature_engineering_3, 2
-    elif feature_engineering_function == "10":
-        return feature_engineering_10, 2
-
     else:
-        raise NotImplementedError("Feature engineering function",feature_engineering_function,"is not implemented")
+        raise NotImplementedError("Feature engineering function", feature_engineering_function, "is not implemented")
 
 class InstanSeg(nn.Module):
 
@@ -782,12 +563,8 @@ class InstanSeg(nn.Module):
             return model
         else:
             if MLP_input_dim is None:
-                MLP_input_dim = self.feature_engineering_width + self.n_sigma -2 + self.dim_coords
-            model.pixel_classifier = ProbabilityNet( MLP_input_dim, width = MLP_width)
-            if self.feature_engineering_function != "10":
-                model.pixel_classifier = ProbabilityNet( MLP_input_dim, width = MLP_width)
-            else:
-                model.pixel_classifier = ConvProbabilityNet( MLP_input_dim, width = MLP_width)
+                MLP_input_dim = self.feature_engineering_width + self.n_sigma - 2 + self.dim_coords
+            model.pixel_classifier = ProbabilityNet(MLP_input_dim, width=MLP_width)
             self.pixel_classifier = model.pixel_classifier.to(self.device)
 
             return model
@@ -1141,7 +918,7 @@ class InstanSeg(nn.Module):
                 if len(out)==3:
                     crops, coords, mask_map = out
                 else:
-                    pdb.set_trace()
+                    raise ValueError(f"Expected postprocessing output of length 3, got {len(out)}")
 
                 crops = t.deaugment_mask(crops)
                 all_crops.append(crops.cpu())

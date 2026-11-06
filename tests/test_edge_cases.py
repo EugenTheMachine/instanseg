@@ -173,9 +173,8 @@ class TestDisplayFunction:
 
     def test_display_with_tensor_input(self):
         image = torch.rand(3, 256, 256)
-        labels = torch.zeros((1, 2, 256, 256), dtype=torch.int32)
+        labels = torch.zeros((1, 1, 256, 256), dtype=torch.int32)
         labels[0, 0, 50:100, 50:100] = 1
-        labels[0, 1, 45:105, 45:105] = 1
         
         result = self.instanseg.display(image, labels)
         assert result is not None

@@ -125,9 +125,10 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
     if "dropprob" not in build_model_dictionary.keys():
         build_model_dictionary["dropprob"] = 0.0
 
-    if build_model_dictionary["model_str"].lower() == "instanseg_unet":
-            from instanseg.utils.models.InstanSeg_UNet import InstanSeg_UNet
-            print("Generating InstanSeg_UNet")
+    model_str = build_model_dictionary["model_str"].lower()
+    if model_str in ["instanseg_unet", "efficientunetb0"]:
+            from instanseg.utils.models.InstanSeg_UNet import UNet
+            print(f"Generating {model_str}")
             multihead = build_model_dictionary["multihead"]
 
             n_seeds = build_model_dictionary["dim_seeds"]
@@ -136,11 +137,14 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
             else:
                 out_channels = [[build_model_dictionary["dim_coords"]], [build_model_dictionary["n_sigma"]],[n_seeds]]
 
-            model = InstanSeg_UNet(in_channels=dim_in, 
-                            layers = np.array(build_model_dictionary["layers"])[::-1],
-                            out_channels=out_channels,
-                            norm  = build_model_dictionary["norm"], 
-                            dropout=build_model_dictionary["dropprob"])
+            model = UNet(
+                model_type=model_str,
+                in_channels=dim_in, 
+                layers=np.array(build_model_dictionary["layers"])[::-1],
+                out_channels=out_channels,
+                norm=build_model_dictionary["norm"], 
+                dropout=build_model_dictionary["dropprob"]
+            )
             
 
     elif build_model_dictionary["model_str"].lower() == "cellposesam":

@@ -2,11 +2,35 @@
 
 ## GENERAL DESCRIPTION
 
-Within this task you must implement several modifications of the U-net model which is directly used in the InstanSeg model. The backbones must be implemented based on the existing concolutional backbones with customly created decoders for each of them to ensure that the dimensionalities are matched and the models are working properly.
+Within this task, preserve the existing `InstanSeg_UNet` and add exactly one new architecture option: `EfficientUNetB0`, based on the torchvision EfficientNet-B0 backbone with a custom decoder. Other architecture options are explicitly out of scope for now.
 
 ## REQUIREMENTS
 
 ### GENERAL REQUIREMENTS
+
+### BACKWARD-COMPATIBILITY AND TRAINING CONTRACT
+
+The existing `InstanSeg_UNet` is the behavioral baseline and must remain unchanged in behavior. The only new architecture in scope is `EfficientUNetB0`; adding it must not change the default architecture or the training/inference contract of `InstanSeg_UNet`. Do not implement or register any other new backbone architecture in this task.
+
+#### Input contract
+
+* Both supported architecture options accept a floating-point image tensor in `NCHW` layout: `[batch, channels, height, width]`, with two spatial dimensions. Preserve the existing preprocessing and pass image values through to the model without adding an input transform.
+* `channels` must match the resolved `dim_in` used to construct the model. Preserve the existing model-builder behavior that resolves `dim_in` of `0` or `None` to `3`.
+* The `instanseg_unet` route must preserve the existing layer, normalization, activation, and dropout arguments and their defaults. In particular, do not silently change the current `InstanSeg_UNet` block structure or make its currently unused `dropout` argument affect the forward pass.
+* The current `InstanSeg_UNet` has one initial, non-pooling encoder block followed by one 2x max-pooling operation for each remaining encoder block; each decoder block upsamples by 2. Its input height and width must therefore be divisible by `2 ** (number_of_encoder_blocks - 1)` (8 for the default four-block encoder) for skip tensors to align. Do not silently crop, pad, or otherwise alter the legacy input to hide a mismatch; reject unsupported spatial sizes clearly. The current training crop size of 512 satisfies this constraint.
+
+#### Output contract
+
+* Return one raw `torch.Tensor`, not a tuple, list, or mapping, in `NCHW` layout. Its batch size and spatial dimensions must match the input; `EfficientUNetB0` must restore the exact input height and width.
+* For InstanSeg, output channels must total `dim_coords + n_sigma + dim_seeds` and remain concatenated in this exact order: coordinate channels, sigma channels, then seed channels. Preserve the raw head values and current final-layer normalization behavior; do not add a sigmoid, softmax, threshold, or channel reordering in the model. The loss and inference code apply their existing channel-specific transforms downstream.
+* Preserve the existing `multihead` behavior: with `multihead=False`, one decoder emits the coordinate, sigma, and seed channel groups; with `multihead=True`, three independent decoders emit those groups in coordinate/sigma/seed order. Both modes return the same total channel count and tensor shape.
+* Preserve the existing `out_channels` convention for direct `InstanSeg_UNet` construction: an integer means one output group; a flat list means one decoder with those output groups; a list of lists means multiple decoders whose outputs are concatenated in list order.
+
+#### Legacy model and verification requirements
+
+* `UNet(model_type="instanseg_unet")` must select the existing `InstanSeg_UNet` behavior and defaults; `UNet(model_type="efficientunetb0")` must select `EfficientUNetB0`. These are the only supported U-Net model types in this task; all other values must raise `ValueError`. Keep direct `InstanSeg_UNet` construction working for existing callers; the general class/factory must not add wrapper dimensions to the legacy model's parameter names or otherwise break strict loading of existing checkpoints.
+* For the legacy model, preserve the forward computation, module/parameter/buffer shapes and names, initialization behavior, and training-time behavior. Do not replace the default legacy model with a torchvision backbone. `EfficientUNetB0` may have different internal computation, but must honor the input and output contracts above.
+* Add regression tests using a state-dict/output reference captured from the unmodified legacy implementation: load that state dict strictly into the refactored legacy route, compare outputs and parameter gradients for identical weights and inputs, and check output shapes and channel-group ordering for both `multihead` settings. Cover the spatial divisibility constraint and reject unsupported `model_type` values with `ValueError`. Run the tests required below, including the existing training/checkpoint tests, before considering the refactor complete.
 
 Here is a general step-by-step workflow that you must follow when completing this task. You can only proceed to the next step after you have successfully completed the current step and verified that it is actually fully accomplished. You must not proceed to the next step if you have not verified that the current step is fully accomplished:
 
@@ -19,72 +43,22 @@ Here is a general step-by-step workflow that you must follow when completing thi
 7. After you have executed and passed all the tests, verify the scope of the work you did with what is required in this file to ensure you actually implemented everything required. If something is missing, implement and/or test it and then verify again. Keep verifying until you ensure that you actually verified and tested everything required.
 8. After successfully passing full verification from the previous step, explicitly tell me that "all the requirements have been properly implemented and tested. The task is completed".
 
-Also note that every newly added U-net modification must be modular for better structuring and easier code comprehension. Particularly the resulting modified code should contain the following classes (name them accordingly, based on the names of the used backbone models):
+Also note that the new `EfficientUNetB0` implementation must be modular for better structuring and easier code comprehension. In scope for this task, the resulting code should contain the following components (named accordingly for the EfficientNet-B0 backbone):
 
 * encoder (an already existing backbone from the torchvision library, but without one or several final layers, so that the latent representation would be sufficient for further segmentation);
 * decoder block class (it must mirror corresponding encoder blocks from the backbone network);
 * decoder class (it must consist of several sequential decoder blocks and fully mirror the backbone network);
-* U-net model class (it must consist of the encoder and decoder objects; by initializing the instance of this class we should initialize the full U-net model).
+* `EfficientUNetB0` model class (it must consist of the encoder and decoder objects; by initializing the instance of this class we should initialize the full U-Net model).
 
-Also, create the `UNet` class which will be the general class for creating U-net models of diffeent architectures. It should also be the parent class for all other U-net classes, including the already existing `InstanSeg_UNet`. It should also define the general scope of attributes and methods used for the U-net model. Also, it should be used instead of the `InstanSeg_UNet` class when creating the InstanSeg model, as well as in any other situations when the `InstanSeg_UNet` class is currently used.
+Also, create the `UNet` class as the shared parent/base class and general construction interface for the only two architectures in scope: the existing `InstanSeg_UNet` and the new `EfficientUNetB0`. Both architecture classes must derive from `UNet`; it should define their shared U-Net interface and accept `model_type` to select either `"instanseg_unet"` or `"efficientunetb0"`. Use this interface instead of direct `InstanSeg_UNet` construction when creating the InstanSeg model and in other existing U-Net construction sites. Keep direct `InstanSeg_UNet` construction available for backward compatibility. Do not add factory options for architectures outside this scope.
 
 ### 1. Implement the `EfficientUNetB0` class
 
 You must implement the `EfficientUNetB0` class, based on the `torchvision.models.efficientnet_b0` backbone from torchvision.
 
-### 2. Implement the `EfficientUNetB1` class
+### 2. Implement the `UNet` class
 
-You must implement the `EfficientUNetB1` class, based on the `torchvision.models.efficientnet_b1` backbone from torchvision.
-
-### 3. Implement the `EfficientUNetB2` class
-
-You must implement the `EfficientUNetB2` class, based on the `torchvision.models.efficientnet_b2` backbone from torchvision.
-
-### 4. Implement the `EfficientUNetB3` class
-
-You must implement the `EfficientUNetB3` class, based on the `torchvision.models.efficientnet_b3` backbone from torchvision.
-
-### 5. Implement the `EfficientUNetV2S` class
-
-You must implement the `EfficientUNetV2S` class, based on the `torchvision.models.efficientnet_v2_s` backbone from torchvision.
-
-### 6. Implement the `MobileUNetV2` class
-
-You must implement the `MobileUNetV2` class, based on the `torchvision.models.mobilenet_v2` backbone from torchvision.
-
-### 7. Implement the `MobileUNetV3S` class
-
-You must implement the `MobileUNetV3S` class, based on the `torchvision.models.mobilenet_v3_small` backbone from torchvision.
-
-### 8. Implement the `MobileUNetV3L` class
-
-You must implement the `MobileUNetV3L` class, based on the `torchvision.models.mobilenet_v3_large` backbone from torchvision.
-
-### 9. Implement the `RegNetUNetY400mf` class
-
-You must implement the `RegNetUNetY400mf` class, based on the `torchvision.models.regnet_y_400mf` backbone from torchvision.
-
-### 10. Implement the `RegNetUNetY800mf` class
-
-You must implement the `RegNetUNetY800mf` class, based on the `torchvision.models.regnet_y_800mf` backbone from torchvision.
-
-### 11. Implement the `ResNetUNet18` class
-
-You must implement the `ResNetUNet18` class, based on the `torchvision.models.resnet18` backbone from torchvision.
-
-### 12. Implement the `UNet` class
-
-You must implement the `UNet` class as the main U-net class and adapt the `InstanSeg_UNet` class accordingly, so that it would become the child class of the `UNet`. Also ensure that the `UNet` class accepts the `model_type` configurable parameter and the following values (any other values not listed below must trigger the ValueError exception):
+You must implement the `UNet` class as the shared parent/base class and construction interface, and adapt both `InstanSeg_UNet` and `EfficientUNetB0` as child classes. Ensure that the `UNet` construction interface accepts the configurable `model_type` parameter with only the following values (any other value must trigger `ValueError`):
 
 * "instanseg_unet" - must initialize the current implementation of the `InstanSeg_UNet` class;
 * "efficientunetb0" - must initialize the current implementation of the `EfficientUNetB0` class;
-* "efficientunetb1" - must initialize the current implementation of the `EfficientUNetB1` class;
-* "efficientunetb2" - must initialize the current implementation of the `EfficientUNetB2` class;
-* "efficientunetb3" - must initialize the current implementation of the `EfficientUNetB3` class;
-* "efficientunetv2s" - must initialize the current implementation of the `EfficientUNetV2S` class;
-* "mobileunetv2" - must initialize the current implementation of the `MobileUNetV2` class;
-* "mobileunetv3s" - must initialize the current implementation of the `MobileUNetV3S` class;
-* "mobileunetv3l" - must initialize the current implementation of the `MobileUNetV3L` class;
-* "regnetunety400mf" - must initialize the current implementation of the `RegNetUNetY400mf` class;
-* "regnetunety800mf" - must initialize the current implementation of the `RegNetUNetY800mf` class;
-* "resnetunet18" - must initialize the current implementation of the `ResNetUNet18` class.

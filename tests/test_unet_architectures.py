@@ -13,6 +13,14 @@ from instanseg.utils.models.InstanSeg_UNet import (
     EfficientNetDecoderBlock,
     EfficientDecoder,
     EfficientNetDecoder,
+    ConvNeXtUNet,
+    ConvNeXtTinyUNet,
+    ConvNeXtEncoder,
+    ConvNeXtTinyEncoder,
+    ConvNeXtDecoderBlock,
+    ConvNeXtTinyDecoderBlock,
+    ConvNeXtDecoder,
+    ConvNeXtTinyDecoder,
 )
 from instanseg.utils.model_loader import build_model_from_dict
 from instanseg.utils.loss.instanseg_loss import InstanSeg as InstanSegLoss
@@ -307,8 +315,8 @@ class TestEfficientUNetB0ModularArchitecture:
         bottleneck, skips = enc(x)
         assert bottleneck.shape == (1, 320, 2, 2)
         assert len(skips) == 5
-        # Skip dimensions from shallow to deep:
-        assert skips[0].shape == (1, 3, 64, 64)   # scale 1
+        # Skip dimensions from shallow to deep (skips[0] is None to avoid raw-pixel injection):
+        assert skips[0] is None
         assert skips[1].shape == (1, 16, 32, 32)  # scale 1/2
         assert skips[2].shape == (1, 24, 16, 16)  # scale 1/4
         assert skips[3].shape == (1, 40, 8, 8)    # scale 1/8
@@ -334,7 +342,7 @@ class TestEfficientUNetB0ModularArchitecture:
             (112, 40, 40),
             (40, 24, 24),
             (24, 16, 16),
-            (16, 3, 16),
+            (16, 0, 16),
         ]
         dec = EfficientDecoder(stage_channels, out_channels=[2, 2, 1])
         assert isinstance(dec, nn.Module)
@@ -342,7 +350,7 @@ class TestEfficientUNetB0ModularArchitecture:
 
         bottleneck = torch.randn(1, 320, 2, 2)
         skips = [
-            torch.randn(1, 3, 64, 64),
+            None,
             torch.randn(1, 16, 32, 32),
             torch.randn(1, 24, 16, 16),
             torch.randn(1, 40, 8, 8),
@@ -464,3 +472,109 @@ class TestModelLoaderAndLossIntegration:
         # Verify gradients flowed back into backbone
         has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.parameters())
         assert has_grad
+
+
+class TestConvNeXtUNetModularArchitecture:
+    """
+    Tests for modularity and components of ConvNeXtUNet.
+    """
+
+    def test_factory_selects_convnext_unet(self):
+        model = UNet(model_type="convnext_unet", in_channels=3, out_channels=[[2, 2, 1]])
+        assert isinstance(model, UNet)
+        assert isinstance(model, ConvNeXtUNet)
+        assert model.model_type == "convnext_unet"
+
+        m_alias = UNet(model_type="convnext_tiny", in_channels=3, out_channels=[[2, 2, 1]])
+        assert isinstance(m_alias, ConvNeXtUNet)
+
+    def test_encoder_component(self):
+        enc = ConvNeXtEncoder(in_channels=3)
+        assert isinstance(enc, nn.Module)
+        assert isinstance(enc, ConvNeXtTinyEncoder)
+
+        x = torch.randn(1, 3, 64, 64)
+        bottleneck, skips = enc(x)
+        assert bottleneck.shape == (1, 768, 2, 2)
+        assert len(skips) == 5
+        assert skips[0] is None
+        assert skips[1] is None
+        assert skips[2].shape == (1, 96, 16, 16)
+        assert skips[3].shape == (1, 192, 8, 8)
+        assert skips[4].shape == (1, 384, 4, 4)
+
+    def test_decoder_block_component(self):
+        block = ConvNeXtDecoderBlock(
+            in_channels=768,
+            skip_channels=384,
+            out_channels=384,
+        )
+        assert isinstance(block, nn.Module)
+        assert isinstance(block, ConvNeXtTinyDecoderBlock)
+
+        x = torch.randn(1, 768, 4, 4)
+        skip = torch.randn(1, 384, 8, 8)
+        out = block(x, skip)
+        assert out.shape == (1, 384, 8, 8)
+
+    def test_decoder_component(self):
+        stage_channels = [
+            (768, 384, 384),
+            (384, 192, 192),
+            (192, 96, 96),
+            (96, 0, 48),
+            (48, 0, 32),
+        ]
+        dec = ConvNeXtDecoder(stage_channels, out_channels=[2, 2, 1])
+        assert isinstance(dec, nn.Module)
+        assert isinstance(dec, ConvNeXtTinyDecoder)
+
+        bottleneck = torch.randn(1, 768, 2, 2)
+        skips = [
+            None,
+            None,
+            torch.randn(1, 96, 16, 16),
+            torch.randn(1, 192, 8, 8),
+            torch.randn(1, 384, 4, 4),
+        ]
+        out = dec(bottleneck, skips)
+        assert out.shape == (1, 5, 64, 64)
+
+    def test_model_composition(self):
+        model = ConvNeXtUNet(in_channels=3, out_channels=[[2, 2, 1]])
+        assert hasattr(model, "encoder")
+        assert hasattr(model, "decoder")
+        assert hasattr(model, "decoders")
+        assert isinstance(model.encoder, ConvNeXtEncoder)
+        assert isinstance(model.decoder, ConvNeXtDecoder)
+
+    def test_custom_in_channels(self):
+        model = ConvNeXtUNet(in_channels=1, out_channels=[[2, 2, 1]])
+        x = torch.randn(1, 1, 64, 64)
+        out = model(x)
+        assert out.shape == (1, 5, 64, 64)
+
+    def test_convnext_unet_spatial_divisibility(self):
+        model = ConvNeXtUNet(in_channels=3, out_channels=[[2, 2, 1]])
+        out = model(torch.randn(1, 3, 64, 96))
+        assert out.shape == (1, 5, 64, 96)
+        with pytest.raises(ValueError, match="divisible"):
+            model(torch.randn(1, 3, 48, 64))
+
+    def test_build_model_from_dict_convnext_unet(self):
+        cfg = {
+            "model_str": "convnext_unet",
+            "dim_in": 3,
+            "dim_coords": 2,
+            "n_sigma": 2,
+            "dim_seeds": 1,
+            "multihead": False,
+            "layers": [32, 64, 128, 256],
+            "norm": "BATCH",
+            "dropprob": 0.0,
+        }
+        model = build_model_from_dict(cfg)
+        assert isinstance(model, ConvNeXtUNet)
+        x = torch.randn(1, 3, 64, 64)
+        out = model(x)
+        assert out.shape == (1, 5, 64, 64)

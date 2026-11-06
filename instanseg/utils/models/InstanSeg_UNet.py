@@ -72,15 +72,17 @@ class UNet(nn.Module):
             if model_type is None or not isinstance(model_type, str):
                 raise ValueError("model_type must be specified as 'instanseg_unet', 'efficientunetb0', or 'convnext_unet'")
 
-            mt_lower = model_type.lower()
+            mt_lower = model_type.lower().replace("-", "_")
             if mt_lower == "instanseg_unet":
                 target_cls = InstanSeg_UNet
             elif mt_lower == "efficientunetb0":
                 target_cls = EfficientUNetB0
-            elif mt_lower in ("convnext_unet", "convnext_tiny"):
+            elif mt_lower in ("convnext_unet", "convnext_tiny", "convnext"):
                 target_cls = ConvNeXtUNet
             else:
-                raise ValueError(f"Unsupported model_type: '{model_type}'")
+                raise ValueError(
+                    f"Unsupported model_type: '{model_type}'. Expected 'instanseg_unet', 'efficientunetb0', or 'convnext_unet'."
+                )
 
             return super(UNet, target_cls).__new__(target_cls)
         return super().__new__(cls)
@@ -284,6 +286,11 @@ class ConvNeXtUNet(UNet):
             ConvNeXtDecoder(stage_channels, out_channel, norm=norm, act=act)
             for out_channel in out_channels
         ])
+
+        if len(self.decoders) == 1:
+            self.decoder = self.decoders[0]
+        else:
+            self.decoder = self.decoders
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self._validate_input_tensor(x, divisor=32)
@@ -628,6 +635,9 @@ EfficientNetEncoder = EfficientEncoder
 EfficientNetDecoderBlock = EfficientDecoderBlock
 EfficientNetDecoder = EfficientDecoder
 ConvNeXtTinyUNet = ConvNeXtUNet
+ConvNeXtTinyEncoder = ConvNeXtEncoder
+ConvNeXtTinyDecoderBlock = ConvNeXtDecoderBlock
+ConvNeXtTinyDecoder = ConvNeXtDecoder
 
 
 if __name__ == "__main__":
@@ -644,3 +654,10 @@ if __name__ == "__main__":
         out_channels=[[2, 2, 1]],
     )
     print("EfficientUNetB0 output shape:", eff_net(torch.randn(1, 3, 256, 256)).shape)
+
+    conv_net = UNet(
+        model_type="convnext_unet",
+        in_channels=3,
+        out_channels=[[2, 2, 1]],
+    )
+    print("ConvNeXtUNet output shape:", conv_net(torch.randn(1, 3, 256, 256)).shape)

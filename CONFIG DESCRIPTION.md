@@ -20,6 +20,8 @@ This file describes the project configuration parameters used by `config.yaml` a
     - `maskrcnn-resnet50_fpn`
     - `InstanSeg_UNet`
     - `efficientunetb0`
+    - `convnext_unet`
+    - `convnext_tiny`
     - `efficientunetb1`
     - `efficientunetb2`
     - `efficientunetb3`

@@ -125,25 +125,35 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
     if "dropprob" not in build_model_dictionary.keys():
         build_model_dictionary["dropprob"] = 0.0
 
-    model_str = build_model_dictionary["model_str"].lower()
-    if model_str in ["instanseg_unet", "efficientunetb0"]:
-            from instanseg.utils.models.InstanSeg_UNet import UNet
-            print(f"Generating {model_str}")
-            multihead = build_model_dictionary["multihead"]
+    model_str = build_model_dictionary["model_str"].lower().replace("-", "_")
+    if model_str in ["instanseg_unet", "efficientunetb0", "convnext_unet", "convnext_tiny", "convnext"]:
+        from instanseg.utils.models.InstanSeg_UNet import UNet
+        print(f"Generating {model_str}")
+        multihead = build_model_dictionary["multihead"]
 
-            n_seeds = build_model_dictionary["dim_seeds"]
-            if not multihead:
-                out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],n_seeds]]
-            else:
-                out_channels = [[build_model_dictionary["dim_coords"]], [build_model_dictionary["n_sigma"]],[n_seeds]]
+        n_seeds = build_model_dictionary["dim_seeds"]
+        if not multihead:
+            out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"], n_seeds]]
+        else:
+            out_channels = [[build_model_dictionary["dim_coords"]], [build_model_dictionary["n_sigma"]], [n_seeds]]
 
+        # ConvNeXt backbone has fixed feature dims — the "layers" param is irrelevant
+        if model_str in ("convnext_unet", "convnext_tiny", "convnext"):
             model = UNet(
                 model_type=model_str,
-                in_channels=dim_in, 
+                in_channels=dim_in,
+                out_channels=out_channels,
+                norm=build_model_dictionary["norm"],
+                dropout=build_model_dictionary["dropprob"],
+            )
+        else:
+            model = UNet(
+                model_type=model_str,
+                in_channels=dim_in,
                 layers=np.array(build_model_dictionary["layers"])[::-1],
                 out_channels=out_channels,
-                norm=build_model_dictionary["norm"], 
-                dropout=build_model_dictionary["dropprob"]
+                norm=build_model_dictionary["norm"],
+                dropout=build_model_dictionary["dropprob"],
             )
             
 

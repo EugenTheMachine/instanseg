@@ -68,6 +68,7 @@ parser.add_argument('-rng_seed', '--rng_seed', default=None, type=int, help = "O
 parser.add_argument('-use_deterministic', '--use_deterministic', default=False, type=lambda x: (str(x).lower() == 'true'), help = "Whether to use deterministic algorithms (default=False)")
 parser.add_argument('-tile', '--tile_size', default=256, type=int, help = "Tile sizes for the input images")
 parser.add_argument('-diam', '--mean_object_diameter', default=None, type=int, help = "Target diameter of the instances. Only use if pixel size is not available.")
+parser.add_argument('-amp', '--amp', default=False, type=lambda x: (str(x).lower() == 'true'), help = "Whether to use Automatic Mixed Precision (FP16) for training")
 
 
 def main(model, loss_fn, train_loader, test_loader, num_epochs=1000, epoch_name='output_epoch'):
@@ -80,11 +81,15 @@ def main(model, loss_fn, train_loader, test_loader, num_epochs=1000, epoch_name=
     best_f1_score = -1
     f1_list = []
 
+    device_obj = torch.device(device)
+    use_amp = bool(getattr(args, "amp", False)) and (device_obj.type == "cuda")
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+
     for epoch in range(num_epochs):
 
         print("Epoch:", epoch)
 
-        train_loss, train_time = train_epoch(model, device, train_loader, loss_fn, optimizer, args = args)
+        train_loss, train_time = train_epoch(model, device, train_loader, loss_fn, optimizer, args=args, scaler=scaler)
 
         if epoch <= 5 and not args.model_folder:  # Training is just starting AND we are not loading a model
             save_epoch_outputs = True

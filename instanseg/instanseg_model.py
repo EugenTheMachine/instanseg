@@ -52,6 +52,7 @@ def _load_default_config() -> Dict[str, Any]:
             "val_interval": 1,
             "warmup_epochs": 2,
             "resume": False,
+            "amp": False,
         },
         "model": {
             "model_name": "InstanSeg_UNet",
@@ -96,6 +97,7 @@ def _flatten_config(config: Dict[str, Any]) -> Dict[str, Any]:
     flat["n_sigma"] = flat.get("n_sigma", 2)
     flat["norm"] = flat.get("norm", "BATCH")
     flat["channel_invariant"] = flat.get("channel_invariant", False)
+    flat["amp"] = flat.get("amp", False)
     return flat
 
 
@@ -156,6 +158,8 @@ class InstanSegModel:
             "val_interval": ("training", "val_interval"),
             "warmup_epochs": ("training", "warmup_epochs"),
             "resume": ("training", "resume"),
+            "amp": ("training", "amp"),
+            "use_amp": ("training", "amp"),
             "model_name": ("model", "model_name"),
             "num_classes": ("model", "num_classes"),
             "freeze_backbone_epochs": ("model", "freeze_backbone_epochs"),
@@ -168,6 +172,13 @@ class InstanSegModel:
             "optimizer_type": ("optimizer", "type"),
             "type": ("optimizer", "type"),
         }
+        if "precision" in kwargs and kwargs["precision"] is not None:
+            p_val = str(kwargs["precision"]).lower()
+            if p_val in ("fp16", "amp", "half"):
+                self.config["training"]["amp"] = True
+            elif p_val in ("fp32", "full", "single"):
+                self.config["training"]["amp"] = False
+
         for k, v in kwargs.items():
             if k in {"target_segmentation", "cells_and_nuclei"}:
                 raise ValueError(f"{k} is not supported; this version performs cell segmentation only.")
@@ -321,6 +332,19 @@ class InstanSegModel:
         else:
             optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=weight_decay)
 
+        amp_enabled = bool(self.config["training"].get("amp", False))
+        use_amp = amp_enabled and (self.device.type == "cuda")
+        if amp_enabled and not use_amp:
+            logger.info("AMP (FP16) requested but CUDA is not available. Falling back to default full precision (FP32).")
+        elif use_amp:
+            logger.info("AMP (FP16) mixed precision training mode enabled.")
+        else:
+            logger.info("Training with default full precision (FP32) mode.")
+
+        scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+        setattr(args, "amp", use_amp)
+        setattr(args, "scaler", scaler)
+
         start_epoch = 1
         best_val_loss = float("inf")
         patience_counter = 0
@@ -339,7 +363,13 @@ class InstanSegModel:
                 ckp_file = self.checkpoint_path
 
             if ckp_file and ckp_file.exists():
-                ckp = load_checkpoint(ckp_file, self.model, optimizer=optimizer, device=self.device)
+                ckp = load_checkpoint(
+                    ckp_file,
+                    self.model,
+                    optimizer=optimizer,
+                    scaler=scaler,
+                    device=self.device,
+                )
                 if "rng_states" in ckp:
                     set_rng_states(ckp["rng_states"])
                 start_epoch = ckp.get("epoch", 0) + 1
@@ -377,6 +407,7 @@ class InstanSegModel:
                 train_loss_fn=loss_fn,
                 train_optimizer=optimizer,
                 args=args,
+                scaler=scaler,
             )
 
             is_val_epoch = (epoch % val_interval == 0) or (epoch == total_epochs)
@@ -393,8 +424,9 @@ class InstanSegModel:
                     for img_b, lbl_b, _ in tqdm(val_loader, desc="Validation", disable=False):
                         img_b = img_b.to(self.device)
                         lbl_b = lbl_b.to(self.device)
-                        out = self.model(img_b)
-                        loss = loss_fn(out, lbl_b.clone()).mean()
+                        with torch.amp.autocast(device_type=self.device.type, dtype=torch.float16, enabled=use_amp):
+                            out = self.model(img_b)
+                            loss = loss_fn(out, lbl_b.clone()).mean()
                         val_losses.append(loss.detach().cpu().item())
 
                         # Generate predictions for metrics matching
@@ -449,6 +481,8 @@ class InstanSegModel:
                 "rng_states": get_rng_states(),
                 "config": self.config,
             }
+            if use_amp and scaler is not None:
+                checkpoint_state["scaler_state_dict"] = scaler.state_dict()
 
             save_checkpoint(checkpoint_state, is_best, checkpoints_dir, filename="last.pt", best_filename="best.pt")
             save_checkpoint(checkpoint_state, is_best, exp_dir, filename="last.pt", best_filename="best.pt")
@@ -479,8 +513,9 @@ class InstanSegModel:
             for img_b, lbl_b, _ in tqdm(test_loader, desc="Test Evaluation", disable=False):
                 img_b = img_b.to(self.device)
                 lbl_b = lbl_b.to(self.device)
-                out = self.model(img_b)
-                loss = loss_fn(out, lbl_b.clone()).mean()
+                with torch.amp.autocast(device_type=self.device.type, dtype=torch.float16, enabled=use_amp):
+                    out = self.model(img_b)
+                    loss = loss_fn(out, lbl_b.clone()).mean()
                 test_losses.append(loss.detach().cpu().item())
 
                 if isinstance(out, list):
@@ -569,6 +604,7 @@ class InstanSegModel:
         def loss_fn(*args_fn, **kwargs_fn):
             return instanseg_loss_instance.forward(*args_fn, **kwargs_fn)
 
+        use_amp = bool(self.config["training"].get("amp", False)) and (self.device.type == "cuda")
         eval_losses = []
         eval_preds = []
         eval_targets = []
@@ -577,8 +613,9 @@ class InstanSegModel:
             for img_b, lbl_b, _ in tqdm(eval_loader, desc=f"Evaluation ({subset})", disable=False):
                 img_b = img_b.to(self.device)
                 lbl_b = lbl_b.to(self.device)
-                out = self.model(img_b)
-                loss = loss_fn(out, lbl_b.clone()).mean()
+                with torch.amp.autocast(device_type=self.device.type, dtype=torch.float16, enabled=use_amp):
+                    out = self.model(img_b)
+                    loss = loss_fn(out, lbl_b.clone()).mean()
                 eval_losses.append(loss.detach().cpu().item())
 
                 if isinstance(out, list):

@@ -17,6 +17,7 @@ def train_epoch(train_model,
                 train_loss_fn, 
                 train_optimizer, 
                 args,
+                scaler=None,
                 ):
     start = time.time()
     train_model.train()
@@ -26,21 +27,40 @@ def train_epoch(train_model,
     if accumulation_steps < 1:
         accumulation_steps = 1
 
+    device_type = torch.device(train_device).type
+    use_amp = bool(getattr(args, "amp", False)) and (device_type == "cuda")
+
+    if scaler is None and use_amp:
+        scaler = getattr(args, "scaler", None)
+
     train_optimizer.zero_grad()
 
     for i, (image_batch, labels_batch, _) in enumerate(tqdm(train_dataloader, disable=args.on_cluster)):
 
         image_batch = image_batch.to(train_device)
         labels = labels_batch.to(train_device)
-        output = train_model(image_batch)
-        loss = train_loss_fn(output, labels.clone()).mean()
+
+        with torch.amp.autocast(device_type=device_type, dtype=torch.float16, enabled=use_amp):
+            output = train_model(image_batch)
+            loss = train_loss_fn(output, labels.clone()).mean()
 
         scaled_loss = loss / accumulation_steps
-        scaled_loss.backward()
+
+        if scaler is not None and use_amp:
+            scaler.scale(scaled_loss).backward()
+        else:
+            scaled_loss.backward()
 
         if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_dataloader):
-            torch.nn.utils.clip_grad_norm_(train_model.parameters(), args.clip)
-            train_optimizer.step()
+            if scaler is not None and use_amp:
+                scaler.unscale_(train_optimizer)
+                torch.nn.utils.clip_grad_norm_(train_model.parameters(), args.clip)
+                scaler.step(train_optimizer)
+                scaler.update()
+            else:
+                torch.nn.utils.clip_grad_norm_(train_model.parameters(), args.clip)
+                train_optimizer.step()
+
             train_optimizer.zero_grad()
 
         train_loss.append(loss.detach().cpu().numpy())
@@ -68,12 +88,16 @@ def test_epoch(test_model,
     test_loss = []
 
     current_f1_list = []
+    device_type = torch.device(test_device).type
+    use_amp = bool(getattr(args, "amp", False)) and (device_type == "cuda")
+
     with torch.no_grad():
         for image_batch, labels_batch, _ in tqdm(test_dataloader, disable=args.on_cluster):
             image_batch = image_batch.to(test_device)
             labels = labels_batch.to(test_device) 
-            output = test_model(image_batch)  
-            loss = test_loss_fn(output, labels.clone()).mean()
+            with torch.amp.autocast(device_type=device_type, dtype=torch.float16, enabled=use_amp):
+                output = test_model(image_batch)  
+                loss = test_loss_fn(output, labels.clone()).mean()
             test_loss.append(loss.detach().cpu().numpy())
 
             if type(output) == list:

@@ -125,6 +125,13 @@ This file describes the project configuration parameters used by `config.yaml` a
   - Description: Number of epochs used for learning rate warmup.
   - Example: `1`
 
+- `amp`
+  - Description: Whether to use Automatic Mixed Precision (FP16) during training.
+  - Valid values:
+    - `false` (default: full precision FP32 mode)
+    - `true` (AMP half precision FP16 mode with gradient scaling)
+  - Example: `false`
+
 - `save_kgl_ckp`
   - Description: Whether to save and optionally upload Kaggle checkpoint bundles during training.
   - Valid values: `true`, `false`

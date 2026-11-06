@@ -17,6 +17,7 @@ training:
   val_interval: 1
   warmup_epochs: 2
   resume: false
+  amp: false
 
 model:
   model_name: "InstanSeg_UNet"

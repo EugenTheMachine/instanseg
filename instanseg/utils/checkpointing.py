@@ -32,6 +32,7 @@ def load_checkpoint(
     model: torch.nn.Module,
     optimizer: Optional[torch.optim.Optimizer] = None,
     scheduler: Optional[Any] = None,
+    scaler: Optional[Any] = None,
     device: Optional[torch.device] = None,
     strict: bool = True,
 ) -> Dict[str, Any]:
@@ -58,6 +59,9 @@ def load_checkpoint(
 
     if scheduler is not None and "scheduler_state_dict" in checkpoint:
         scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+
+    if scaler is not None and "scaler_state_dict" in checkpoint:
+        scaler.load_state_dict(checkpoint["scaler_state_dict"])
 
     return checkpoint
 

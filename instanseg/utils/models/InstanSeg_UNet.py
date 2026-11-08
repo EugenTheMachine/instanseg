@@ -334,34 +334,50 @@ class DecoderBlock(nn.Module):
 
 
 class ImprovedDecoderBlock(nn.Module):
-    def __init__(self, in_channels, skip_channels, out_channels, norm="BATCH", act="GELU"):
+    def __init__(
+        self,
+        in_channels: int,
+        skip_channels: int,
+        out_channels: int,
+        norm: str = "BATCH",
+        act: str = "SiLU",
+        shallow: bool = False,
+    ):
         super().__init__()
-        # 1x1 conv to project upsampled features
         self.conv0 = conv_norm_act(in_channels, out_channels, 1, norm, act)
         self.conv_skip = conv_norm_act(skip_channels, out_channels, 1, norm, act)
+
+        # 1. Spatial Attention Gate
+        attn_conv = nn.Conv2d(out_channels * 2, 1, kernel_size=1)
         
-        # Spatial Attention Gate on the skip connection
+        # FIX: Initialize bias to +1.0 (Sigmoid(+1.0) ≈ 0.73) and small weights
+        # so skip connections are fully open at start of training.
+        nn.init.kaiming_normal_(attn_conv.weight, nonlinearity="sigmoid")
+        nn.init.constant_(attn_conv.bias, 1.0)
+
         self.attn_gate = nn.Sequential(
-            nn.Conv2d(out_channels * 2, 1, kernel_size=1),
-            nn.Sigmoid()
+            attn_conv,
+            nn.Sigmoid(),
         )
-        
+
         self.conv1 = conv_norm_act(in_channels, out_channels, 3, norm, act)
         self.conv2 = conv_norm_act(out_channels, out_channels, 3, norm, act)
-        self.conv3 = conv_norm_act(out_channels, out_channels, 3, norm, act)
+        self.conv3 = conv_norm_act(out_channels, out_channels, 3, norm, act) if not shallow else nn.Identity()
         self.conv4 = conv_norm_act(out_channels, out_channels, 3, norm, act)
 
-    def forward(self, x, skip=None):
-        # 1. Bilinear upsampling to prevent grid artifacts
+    def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
+        # Bilinear upsampling with aligned corners for stable gradient grid
         x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False)
         proj = self.conv0(x)
-        
-        # 2. Attention-gated skip fusion
+
+        # Attention-gated skip connection
         skip_proj = self.conv_skip(skip)
         attn_weight = self.attn_gate(torch.cat([proj, skip_proj], dim=1))
-        gated_skip = skip_proj * attn_weight
         
-        # 3. Residual processing
+        # Residual skip addition to guarantee signal flow even if gate drops
+        gated_skip = skip_proj * (0.5 + 0.5 * attn_weight)
+
+        # Residual decoder block processing
         x = self.conv1(x)
         x = proj + self.conv2(x + gated_skip)
         x = x + self.conv4(self.conv3(x))

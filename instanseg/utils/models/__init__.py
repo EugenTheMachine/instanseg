@@ -25,6 +25,16 @@ from instanseg.utils.models.InstanSeg_UNet import (
     ImprovedDecoder,
     improved_unet,
     Instanseg_Unet,
+    LayerNorm2d,
+    MedNeXtBlock2D,
+    MedNeXtDownBlock2D,
+    MedNeXtUpBlock2D,
+    MedNeXtDecoder2D,
+    MedNeXt_UNet,
+    MedNeXtUNet,
+    mednext_unet,
+    MedNeXt_InstanSeg,
+    MedNeXt_InstanSeg_Deep,
 )
 
 __all__ = [
@@ -54,4 +64,14 @@ __all__ = [
     "ImprovedDecoder",
     "improved_unet",
     "Instanseg_Unet",
+    "LayerNorm2d",
+    "MedNeXtBlock2D",
+    "MedNeXtDownBlock2D",
+    "MedNeXtUpBlock2D",
+    "MedNeXtDecoder2D",
+    "MedNeXt_UNet",
+    "MedNeXtUNet",
+    "mednext_unet",
+    "MedNeXt_InstanSeg",
+    "MedNeXt_InstanSeg_Deep",
 ]

@@ -83,9 +83,12 @@ class UNet(nn.Module):
                 target_cls = EfficientUNetB0
             elif mt_lower in ("convnext_unet", "convnext_tiny", "convnext"):
                 target_cls = ConvNeXtUNet
+            elif mt_lower in ("mednext_unet", "mednext", "mednext_instanseg", "mednext_instanseg_deep"):
+                from instanseg.utils.models.MedNeXt_UNet import MedNeXt_UNet
+                target_cls = MedNeXt_UNet
             else:
                 raise ValueError(
-                    f"Unsupported model_type: '{model_type}'. Expected 'instanseg_unet', 'improved_unet', 'efficientunetb0', or 'convnext_unet'."
+                    f"Unsupported model_type: '{model_type}'. Expected 'instanseg_unet', 'improved_unet', 'efficientunetb0', 'convnext_unet', or 'mednext_unet'."
                 )
 
             return super(UNet, target_cls).__new__(target_cls)
@@ -739,6 +742,19 @@ ConvNeXtTinyDecoder = ConvNeXtDecoder
 Instanseg_Unet = InstanSeg_UNet
 Improved_UNet = ImprovedUNet
 improved_unet = ImprovedUNet
+
+from instanseg.utils.models.MedNeXt_UNet import (
+    LayerNorm2d,
+    MedNeXtBlock2D,
+    MedNeXtDownBlock2D,
+    MedNeXtUpBlock2D,
+    MedNeXtDecoder2D,
+    MedNeXt_UNet,
+    MedNeXtUNet,
+    mednext_unet,
+    MedNeXt_InstanSeg,
+    MedNeXt_InstanSeg_Deep,
+)
 
 
 if __name__ == "__main__":

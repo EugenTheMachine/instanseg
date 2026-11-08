@@ -6,6 +6,12 @@ from pathlib import Path
 from instanseg.utils.models.InstanSeg_UNet import (
     UNet,
     InstanSeg_UNet,
+    MedNeXt_UNet,
+    MedNeXtBlock2D,
+    MedNeXtDownBlock2D,
+    MedNeXtUpBlock2D,
+    MedNeXtDecoder2D,
+    LayerNorm2d,
     ImprovedUNet,
     ImprovedDecoderBlock,
     EfficientUNetB0,
@@ -642,6 +648,99 @@ class TestImprovedUNet:
         from instanseg.utils.models.InstanSeg_UNet import ImprovedUNet
         assert isinstance(model, ImprovedUNet)
         assert isinstance(model, InstanSeg_UNet)
+        x = torch.randn(1, 3, 64, 64)
+        out = model(x)
+        assert out.shape == (1, 5, 64, 64)
+
+
+
+class TestMedNeXtUNet:
+    """
+    Unit tests for MedNeXt-2D architecture (MedNeXt_UNet) and building blocks.
+    """
+
+    def test_layer_norm_2d(self):
+        norm = LayerNorm2d(32)
+        x = torch.randn(2, 32, 16, 16)
+        out = norm(x)
+        assert out.shape == (2, 32, 16, 16)
+        # Verify mean ~ 0 and variance ~ 1 along channel dimension
+        assert torch.allclose(out.mean(dim=1), torch.zeros(2, 16, 16), atol=1e-4)
+
+    def test_mednext_block_2d(self):
+        block = MedNeXtBlock2D(in_channels=32, out_channels=32, exp_ratio=2, k_size=7)
+        x = torch.randn(2, 32, 16, 16)
+        out = block(x)
+        assert out.shape == (2, 32, 16, 16)
+
+    def test_mednext_down_block_2d(self):
+        down = MedNeXtDownBlock2D(in_channels=32, out_channels=64, exp_ratio=2, k_size=7)
+        x = torch.randn(2, 32, 32, 32)
+        out = down(x)
+        assert out.shape == (2, 64, 16, 16)
+
+    def test_mednext_up_block_2d(self):
+        up = MedNeXtUpBlock2D(in_channels=64, skip_channels=32, out_channels=32, exp_ratio=2)
+        x = torch.randn(2, 64, 16, 16)
+        skip = torch.randn(2, 32, 32, 32)
+        out = up(x, skip)
+        assert out.shape == (2, 32, 32, 32)
+
+    def test_mednext_decoder_2d(self):
+        decoder = MedNeXtDecoder2D(layers=[128, 64, 32], out_channels=[2, 2, 1], exp_ratio=2)
+        x = torch.randn(2, 128, 8, 8)
+        skips = [torch.randn(2, 32, 32, 32), torch.randn(2, 64, 16, 16)]
+        out = decoder(x, skips)
+        assert out.shape == (2, 5, 32, 32)
+
+    def test_factory_selects_mednext_unet(self):
+        model = UNet(model_type="mednext_unet", in_channels=3, out_channels=[[2, 2, 1]])
+        assert isinstance(model, UNet)
+        assert isinstance(model, MedNeXt_UNet)
+        assert model.model_type == "mednext_unet"
+
+    def test_forward_pass_single_head(self):
+        model = UNet(model_type="mednext_unet", in_channels=3, out_channels=[[2, 2, 1]])
+        x = torch.randn(2, 3, 64, 64)
+        out = model(x)
+        assert out.shape == (2, 5, 64, 64)
+
+    def test_forward_pass_multi_head(self):
+        model = UNet(model_type="mednext_unet", in_channels=3, out_channels=[[2], [2], [1]])
+        x = torch.randn(2, 3, 64, 64)
+        out = model(x)
+        assert out.shape == (2, 5, 64, 64)
+
+    def test_spatial_divisibility(self):
+        model = UNet(model_type="mednext_unet", in_channels=3, out_channels=[[2, 2, 1]])
+        out = model(torch.randn(1, 3, 32, 40))
+        assert out.shape == (1, 5, 32, 40)
+        with pytest.raises(ValueError, match="divisible"):
+            model(torch.randn(1, 3, 33, 40))
+
+    def test_deep_variant(self):
+        shallow = MedNeXt_UNet(in_channels=3, out_channels=[[2, 2, 1]], block_depth=1)
+        deep = MedNeXt_UNet(in_channels=3, out_channels=[[2, 2, 1]], block_depth=2)
+        p_shallow = sum(p.numel() for p in shallow.parameters())
+        p_deep = sum(p.numel() for p in deep.parameters())
+        assert p_deep > p_shallow
+        x = torch.randn(1, 3, 32, 32)
+        assert deep(x).shape == (1, 5, 32, 32)
+
+    def test_build_model_from_dict_mednext(self):
+        cfg = {
+            "model_str": "mednext_unet",
+            "dim_in": 3,
+            "dim_coords": 2,
+            "n_sigma": 2,
+            "dim_seeds": 1,
+            "multihead": False,
+            "layers": [32, 64, 128, 256],
+            "exp_ratio": 2,
+            "k_size": 7,
+        }
+        model = build_model_from_dict(cfg)
+        assert isinstance(model, MedNeXt_UNet)
         x = torch.randn(1, 3, 64, 64)
         out = model(x)
         assert out.shape == (1, 5, 64, 64)

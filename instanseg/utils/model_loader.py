@@ -126,7 +126,7 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
         build_model_dictionary["dropprob"] = 0.0
 
     model_str = build_model_dictionary["model_str"].lower().replace("-", "_")
-    if model_str in ["instanseg_unet", "improved_unet", "improvedunet", "improved_instanseg_unet", "efficientunetb0", "convnext_unet", "convnext_tiny", "convnext"]:
+    if model_str in ["instanseg_unet", "improved_unet", "improvedunet", "improved_instanseg_unet", "efficientunetb0", "convnext_unet", "convnext_tiny", "convnext", "mednext_unet", "mednext", "mednext_instanseg", "mednext_instanseg_deep"]:
         from instanseg.utils.models.InstanSeg_UNet import UNet
         print(f"Generating {model_str}")
         multihead = build_model_dictionary["multihead"]
@@ -145,6 +145,16 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
                 out_channels=out_channels,
                 norm=build_model_dictionary["norm"],
                 dropout=build_model_dictionary["dropprob"],
+            )
+        elif model_str in ("mednext_unet", "mednext", "mednext_instanseg", "mednext_instanseg_deep"):
+            model = UNet(
+                model_type=model_str,
+                in_channels=dim_in,
+                layers=np.array(build_model_dictionary["layers"])[::-1] if "layers" in build_model_dictionary else [256, 128, 64, 32],
+                out_channels=out_channels,
+                exp_ratio=build_model_dictionary.get("exp_ratio", 2),
+                k_size=build_model_dictionary.get("k_size", 7),
+                block_depth=build_model_dictionary.get("block_depth", 2 if "deep" in model_str else 1),
             )
         else:
             model = UNet(

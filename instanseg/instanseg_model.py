@@ -1,4 +1,5 @@
 import os
+import gc
 import copy
 import random
 import yaml
@@ -53,6 +54,7 @@ def _load_default_config() -> Dict[str, Any]:
             "warmup_epochs": 2,
             "resume": False,
             "amp": False,
+            "max_seeds": 300,
         },
         "model": {
             "model_name": "InstanSeg_UNet",
@@ -98,6 +100,7 @@ def _flatten_config(config: Dict[str, Any]) -> Dict[str, Any]:
     flat["norm"] = flat.get("norm", "BATCH")
     flat["channel_invariant"] = flat.get("channel_invariant", False)
     flat["amp"] = flat.get("amp", False)
+    flat["max_seeds"] = flat.get("max_seeds", 300)
     return flat
 
 
@@ -160,6 +163,7 @@ class InstanSegModel:
             "resume": ("training", "resume"),
             "amp": ("training", "amp"),
             "use_amp": ("training", "amp"),
+            "max_seeds": ("training", "max_seeds"),
             "model_name": ("model", "model_name"),
             "num_classes": ("model", "num_classes"),
             "freeze_backbone_epochs": ("model", "freeze_backbone_epochs"),
@@ -344,6 +348,9 @@ class InstanSegModel:
         scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
         setattr(args, "amp", use_amp)
         setattr(args, "scaler", scaler)
+        max_seeds = int(self.config["training"].get("max_seeds", 300))
+        setattr(args, "max_seeds", max_seeds)
+        instanseg_loss_instance.max_seeds = max_seeds
 
         start_epoch = 1
         best_val_loss = float("inf")
@@ -410,11 +417,20 @@ class InstanSegModel:
                 scaler=scaler,
             )
 
+            # Clear cache between epochs / before validation
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+
             is_val_epoch = (epoch % val_interval == 0) or (epoch == total_epochs)
             val_loss = None
             val_metrics = {"precision": 0.0, "recall": 0.0, "accuracy": 0.0, "f1": 0.0}
 
             if is_val_epoch:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                gc.collect()
+
                 self.model.eval()
                 val_losses = []
                 val_preds = []
@@ -433,12 +449,16 @@ class InstanSegModel:
                         if isinstance(out, list):
                             out = out[0]
                         for i in range(out.shape[0]):
-                            pred_mask = instanseg_loss_instance.postprocessing(out[i])
+                            pred_mask = instanseg_loss_instance.postprocessing(out[i], max_seeds=max_seeds)
                             val_preds.append(pred_mask)
                             val_targets.append(lbl_b[i])
 
                 val_loss = float(np.mean(val_losses))
                 val_metrics = compute_dataset_metrics(val_targets, val_preds)
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                gc.collect()
 
             epoch_record = {
                 "epoch": epoch,
@@ -498,6 +518,10 @@ class InstanSegModel:
         if best_ckp.exists():
             load_checkpoint(best_ckp, self.model, device=self.device)
 
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
         test_data_split = dataset_splits["test"]
         test_imgs, test_msks, test_meta = test_data_split
         _, test_loader = get_loaders(
@@ -521,9 +545,13 @@ class InstanSegModel:
                 if isinstance(out, list):
                     out = out[0]
                 for i in range(out.shape[0]):
-                    pred_mask = instanseg_loss_instance.postprocessing(out[i])
+                    pred_mask = instanseg_loss_instance.postprocessing(out[i], max_seeds=max_seeds)
                     test_preds.append(pred_mask)
                     test_targets.append(lbl_b[i])
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
         avg_test_loss = float(np.mean(test_losses))
         test_metrics = compute_dataset_metrics(test_targets, test_preds)
@@ -605,6 +633,12 @@ class InstanSegModel:
             return instanseg_loss_instance.forward(*args_fn, **kwargs_fn)
 
         use_amp = bool(self.config["training"].get("amp", False)) and (self.device.type == "cuda")
+        max_seeds = int(self.config["training"].get("max_seeds", 300))
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
         eval_losses = []
         eval_preds = []
         eval_targets = []
@@ -621,9 +655,13 @@ class InstanSegModel:
                 if isinstance(out, list):
                     out = out[0]
                 for i in range(out.shape[0]):
-                    pred_mask = instanseg_loss_instance.postprocessing(out[i])
+                    pred_mask = instanseg_loss_instance.postprocessing(out[i], max_seeds=max_seeds)
                     eval_preds.append(pred_mask)
                     eval_targets.append(lbl_b[i])
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
         avg_loss = float(np.mean(eval_losses))
         metrics = compute_dataset_metrics(eval_targets, eval_preds)

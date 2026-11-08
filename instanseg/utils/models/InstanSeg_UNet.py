@@ -61,7 +61,7 @@ def conv_norm_act(
 
 
 class UNet(nn.Module):
-    """Factory Base Class supporting instanseg_unet, efficientunetb0, and convnext_unet."""
+    """Factory Base Class supporting instanseg_unet, improved_unet, efficientunetb0, and convnext_unet."""
 
     def __new__(cls, *args, **kwargs):
         if cls is UNet:
@@ -70,18 +70,22 @@ class UNet(nn.Module):
                 model_type = args[0]
 
             if model_type is None or not isinstance(model_type, str):
-                raise ValueError("model_type must be specified as 'instanseg_unet', 'efficientunetb0', or 'convnext_unet'")
+                raise ValueError(
+                    "model_type must be specified as 'instanseg_unet', 'improved_unet', 'efficientunetb0', or 'convnext_unet'"
+                )
 
             mt_lower = model_type.lower().replace("-", "_")
             if mt_lower == "instanseg_unet":
                 target_cls = InstanSeg_UNet
+            elif mt_lower in ("improved_unet", "improved_instanseg_unet", "improvedunet"):
+                target_cls = ImprovedUNet
             elif mt_lower == "efficientunetb0":
                 target_cls = EfficientUNetB0
             elif mt_lower in ("convnext_unet", "convnext_tiny", "convnext"):
                 target_cls = ConvNeXtUNet
             else:
                 raise ValueError(
-                    f"Unsupported model_type: '{model_type}'. Expected 'instanseg_unet', 'efficientunetb0', or 'convnext_unet'."
+                    f"Unsupported model_type: '{model_type}'. Expected 'instanseg_unet', 'improved_unet', 'efficientunetb0', or 'convnext_unet'."
                 )
 
             return super(UNet, target_cls).__new__(target_cls)
@@ -250,7 +254,7 @@ class ConvNeXtUNet(UNet):
         **kwargs,
     ):
         super().__init__()
-        if isinstance(in_channels, str) and in_channels.lower() in ("instanseg_unet", "efficientunetb0", "convnext_unet"):
+        if isinstance(in_channels, str) and in_channels.lower() in ("instanseg_unet", "improved_unet", "efficientunetb0", "convnext_unet"):
             in_channels = out_channels if out_channels is not None else 3
             out_channels = kwargs.pop("out_channels", [[2, 2, 1]])
 
@@ -329,6 +333,41 @@ class DecoderBlock(nn.Module):
         return x
 
 
+class ImprovedDecoderBlock(nn.Module):
+    def __init__(self, in_channels, skip_channels, out_channels, norm="BATCH", act="GELU"):
+        super().__init__()
+        # 1x1 conv to project upsampled features
+        self.conv0 = conv_norm_act(in_channels, out_channels, 1, norm, act)
+        self.conv_skip = conv_norm_act(skip_channels, out_channels, 1, norm, act)
+        
+        # Spatial Attention Gate on the skip connection
+        self.attn_gate = nn.Sequential(
+            nn.Conv2d(out_channels * 2, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+        
+        self.conv1 = conv_norm_act(in_channels, out_channels, 3, norm, act)
+        self.conv2 = conv_norm_act(out_channels, out_channels, 3, norm, act)
+        self.conv3 = conv_norm_act(out_channels, out_channels, 3, norm, act)
+        self.conv4 = conv_norm_act(out_channels, out_channels, 3, norm, act)
+
+    def forward(self, x, skip=None):
+        # 1. Bilinear upsampling to prevent grid artifacts
+        x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False)
+        proj = self.conv0(x)
+        
+        # 2. Attention-gated skip fusion
+        skip_proj = self.conv_skip(skip)
+        attn_weight = self.attn_gate(torch.cat([proj, skip_proj], dim=1))
+        gated_skip = skip_proj * attn_weight
+        
+        # 3. Residual processing
+        x = self.conv1(x)
+        x = proj + self.conv2(x + gated_skip)
+        x = x + self.conv4(self.conv3(x))
+        return x
+
+
 class EncoderBlock(nn.Module):
     def __init__(
         self,
@@ -365,11 +404,11 @@ class EncoderBlock(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, layers, out_channels, norm, act):
+    def __init__(self, layers, out_channels, norm, act, decoder_block=DecoderBlock):
         super().__init__()
 
         self.decoder = nn.ModuleList(
-            [DecoderBlock(layers[i], layers[i + 1], layers[i + 1], norm=norm, act=act) for i in range(len(layers) - 1)]
+            [decoder_block(layers[i], layers[i + 1], layers[i + 1], norm=norm, act=act) for i in range(len(layers) - 1)]
         )
 
         self.final_block = nn.ModuleList(
@@ -393,7 +432,16 @@ class Decoder(nn.Module):
         return x
 
 
+class ImprovedDecoder(Decoder):
+    """Decoder consisting of ImprovedDecoderBlocks and multi-head final blocks."""
+
+    def __init__(self, layers, out_channels, norm="BATCH", act="GELU"):
+        super().__init__(layers, out_channels, norm=norm, act=act, decoder_block=ImprovedDecoderBlock)
+
+
 class InstanSeg_UNet(UNet):
+    decoder_block = DecoderBlock
+
     def __init__(
         self,
         in_channels=3,
@@ -407,7 +455,7 @@ class InstanSeg_UNet(UNet):
     ):
         super().__init__()
         # Handle positional model_type if passed through UNet constructor
-        if isinstance(in_channels, str) and in_channels.lower() in ("instanseg_unet", "efficientunetb0"):
+        if isinstance(in_channels, str) and in_channels.lower() in ("instanseg_unet", "improved_unet", "efficientunetb0", "convnext_unet"):
             in_channels = out_channels if out_channels is not None else 3
             out_channels = layers if layers is not None else [[2, 2, 1]]
             layers = [256, 128, 64, 32]
@@ -415,7 +463,7 @@ class InstanSeg_UNet(UNet):
         if in_channels == 0 or in_channels is None:
             in_channels = 3
         self.in_channels = in_channels
-        self.model_type = "instanseg_unet"
+        self.model_type = model_type
         self.dropout = dropout
 
         layers = list(layers)[::-1]
@@ -431,7 +479,11 @@ class InstanSeg_UNet(UNet):
         if type(out_channels[0]) == int:
             out_channels = [out_channels]
 
-        self.decoders = nn.ModuleList([Decoder(layers, out_channel, norm, act) for out_channel in out_channels])
+        decoder_block = getattr(self, "decoder_block", DecoderBlock)
+        self.decoders = nn.ModuleList([
+            Decoder(layers, out_channel, norm, act, decoder_block=decoder_block)
+            for out_channel in out_channels
+        ])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         divisor = 2 ** (len(self.encoder) - 1)
@@ -443,6 +495,36 @@ class InstanSeg_UNet(UNet):
                 skips.append(x)
 
         return torch.cat([decoder(x, skips) for decoder in self.decoders], dim=1)
+
+
+class ImprovedUNet(InstanSeg_UNet):
+    """
+    Improved U-Net architecture inheriting from InstanSeg_UNet,
+    utilizing ImprovedDecoderBlock with bilinear upsampling and attention-gated skip connections.
+    """
+    decoder_block = ImprovedDecoderBlock
+
+    def __init__(
+        self,
+        in_channels=3,
+        out_channels=[[2, 2, 1]],
+        layers=[256, 128, 64, 32],
+        norm="BATCH",
+        dropout=0,
+        act="GELU",
+        model_type="improved_unet",
+        **kwargs,
+    ):
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            layers=layers,
+            norm=norm,
+            dropout=dropout,
+            act=act,
+            model_type=model_type,
+            **kwargs,
+        )
 
 
 class EfficientEncoder(nn.Module):
@@ -583,7 +665,7 @@ class EfficientUNetB0(UNet):
     ):
         super().__init__()
         # Handle positional model_type if passed through UNet constructor
-        if isinstance(in_channels, str) and in_channels.lower() in ("instanseg_unet", "efficientunetb0"):
+        if isinstance(in_channels, str) and in_channels.lower() in ("instanseg_unet", "improved_unet", "efficientunetb0", "convnext_unet"):
             in_channels = out_channels if out_channels is not None else 3
             out_channels = kwargs.pop("out_channels", [[2, 2, 1]])
 
@@ -638,6 +720,9 @@ ConvNeXtTinyUNet = ConvNeXtUNet
 ConvNeXtTinyEncoder = ConvNeXtEncoder
 ConvNeXtTinyDecoderBlock = ConvNeXtDecoderBlock
 ConvNeXtTinyDecoder = ConvNeXtDecoder
+Instanseg_Unet = InstanSeg_UNet
+Improved_UNet = ImprovedUNet
+improved_unet = ImprovedUNet
 
 
 if __name__ == "__main__":
@@ -647,6 +732,13 @@ if __name__ == "__main__":
         out_channels=[5, 3],
     )
     print("InstanSeg_UNet output shape:", net(torch.randn(1, 3, 256, 256)).shape)
+
+    improved_net = UNet(
+        model_type="improved_unet",
+        in_channels=3,
+        out_channels=[[2, 2, 1]],
+    )
+    print("ImprovedUNet output shape:", improved_net(torch.randn(1, 3, 256, 256)).shape)
 
     eff_net = UNet(
         model_type="efficientunetb0",

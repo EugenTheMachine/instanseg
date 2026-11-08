@@ -1,4 +1,5 @@
 import os
+import gc
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
@@ -69,6 +70,7 @@ parser.add_argument('-use_deterministic', '--use_deterministic', default=False, 
 parser.add_argument('-tile', '--tile_size', default=256, type=int, help = "Tile sizes for the input images")
 parser.add_argument('-diam', '--mean_object_diameter', default=None, type=int, help = "Target diameter of the instances. Only use if pixel size is not available.")
 parser.add_argument('-amp', '--amp', default=False, type=lambda x: (str(x).lower() == 'true'), help = "Whether to use Automatic Mixed Precision (FP16) for training")
+parser.add_argument('-max_seeds', '--max_seeds', default=300, type=int, help = "Maximum seeds for postprocessing")
 
 
 def main(model, loss_fn, train_loader, test_loader, num_epochs=1000, epoch_name='output_epoch'):
@@ -90,6 +92,10 @@ def main(model, loss_fn, train_loader, test_loader, num_epochs=1000, epoch_name=
         print("Epoch:", epoch)
 
         train_loss, train_time = train_epoch(model, device, train_loader, loss_fn, optimizer, args=args, scaler=scaler)
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
         if epoch <= 5 and not args.model_folder:  # Training is just starting AND we are not loading a model
             save_epoch_outputs = True
@@ -212,7 +218,8 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
                         dim_coords= args.dim_coords,
                         dim_seeds = args.dim_seeds, 
                         feature_engineering_function=args.feature_engineering,
-                        bg_weight = args.bg_weight)  # binary_xloss, lovasz_hinge dice_loss general_dice_loss
+                        bg_weight = args.bg_weight,
+                        max_seeds = getattr(args, "max_seeds", 300))  # binary_xloss, lovasz_hinge dice_loss general_dice_loss
 
         def loss_fn(*args, **kwargs):
             return method.forward(*args, **kwargs)

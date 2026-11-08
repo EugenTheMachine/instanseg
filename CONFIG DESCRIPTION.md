@@ -132,6 +132,11 @@ This file describes the project configuration parameters used by `config.yaml` a
     - `true` (AMP half precision FP16 mode with gradient scaling)
   - Example: `false`
 
+- `max_seeds`
+  - Description: Maximum number of candidate instance seeds evaluated per image during postprocessing. Caps peaks by seed confidence to avoid OOM or excessive latency on dense images.
+  - Default: `300`
+  - Example: `300`
+
 - `save_kgl_ckp`
   - Description: Whether to save and optionally upload Kaggle checkpoint bundles during training.
   - Valid values: `true`, `false`

@@ -20,6 +20,11 @@ from instanseg.utils.models.InstanSeg_UNet import (
     EncoderBlock,
     Decoder,
     conv_norm_act,
+    ImprovedUNet,
+    ImprovedDecoderBlock,
+    ImprovedDecoder,
+    improved_unet,
+    Instanseg_Unet,
 )
 
 __all__ = [
@@ -44,4 +49,9 @@ __all__ = [
     "EncoderBlock",
     "Decoder",
     "conv_norm_act",
+    "ImprovedUNet",
+    "ImprovedDecoderBlock",
+    "ImprovedDecoder",
+    "improved_unet",
+    "Instanseg_Unet",
 ]

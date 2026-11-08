@@ -6,6 +6,8 @@ from pathlib import Path
 from instanseg.utils.models.InstanSeg_UNet import (
     UNet,
     InstanSeg_UNet,
+    ImprovedUNet,
+    ImprovedDecoderBlock,
     EfficientUNetB0,
     EfficientEncoder,
     EfficientNetEncoder,
@@ -575,6 +577,71 @@ class TestConvNeXtUNetModularArchitecture:
         }
         model = build_model_from_dict(cfg)
         assert isinstance(model, ConvNeXtUNet)
+        x = torch.randn(1, 3, 64, 64)
+        out = model(x)
+        assert out.shape == (1, 5, 64, 64)
+
+
+class TestImprovedUNet:
+    """
+    Unit tests for ImprovedUNet and ImprovedDecoderBlock.
+    """
+
+    def test_factory_selects_improved_unet(self):
+        model = UNet(model_type="improved_unet", in_channels=3, out_channels=[[2, 2, 1]])
+        assert isinstance(model, UNet)
+        assert isinstance(model, InstanSeg_UNet)
+        assert model.model_type == "improved_unet"
+
+    def test_direct_construction_and_inheritance(self):
+        from instanseg.utils.models.InstanSeg_UNet import ImprovedUNet, ImprovedDecoderBlock, Instanseg_Unet
+        model = ImprovedUNet(in_channels=3, out_channels=[[2, 2, 1]])
+        assert isinstance(model, UNet)
+        assert isinstance(model, InstanSeg_UNet)
+        assert isinstance(model, Instanseg_Unet)
+        assert issubclass(ImprovedUNet, InstanSeg_UNet)
+        assert model.model_type == "improved_unet"
+
+        # Verify decoders use ImprovedDecoderBlock
+        for decoder in model.decoders:
+            for block in decoder.decoder:
+                assert isinstance(block, ImprovedDecoderBlock)
+
+    def test_forward_pass_single_head(self):
+        model = UNet(model_type="improved_unet", in_channels=3, out_channels=[[2, 2, 1]])
+        x = torch.randn(2, 3, 64, 64)
+        out = model(x)
+        assert out.shape == (2, 5, 64, 64)
+
+    def test_forward_pass_multi_head(self):
+        model = UNet(model_type="improved_unet", in_channels=3, out_channels=[[2], [2], [1]])
+        x = torch.randn(2, 3, 64, 64)
+        out = model(x)
+        assert out.shape == (2, 5, 64, 64)
+
+    def test_spatial_divisibility(self):
+        model = UNet(model_type="improved_unet", in_channels=3, out_channels=[[2, 2, 1]])
+        out = model(torch.randn(1, 3, 32, 40))
+        assert out.shape == (1, 5, 32, 40)
+        with pytest.raises(ValueError, match="divisible"):
+            model(torch.randn(1, 3, 33, 40))
+
+    def test_build_model_from_dict_improved_unet(self):
+        cfg = {
+            "model_str": "improved_unet",
+            "dim_in": 3,
+            "dim_coords": 2,
+            "n_sigma": 2,
+            "dim_seeds": 1,
+            "multihead": False,
+            "layers": [32, 64, 128, 256],
+            "norm": "BATCH",
+            "dropprob": 0.0,
+        }
+        model = build_model_from_dict(cfg)
+        from instanseg.utils.models.InstanSeg_UNet import ImprovedUNet
+        assert isinstance(model, ImprovedUNet)
+        assert isinstance(model, InstanSeg_UNet)
         x = torch.randn(1, 3, 64, 64)
         out = model(x)
         assert out.shape == (1, 5, 64, 64)

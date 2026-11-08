@@ -434,7 +434,8 @@ class InstanSeg(nn.Module):
                  feature_engineering_function = "0",
                  bg_weight = None,
                  dim_coords = 2,
-                 dim_seeds = 1,):
+                 dim_seeds = 1,
+                 max_seeds = 300,):
         
         super().__init__()
         self.n_sigma = n_sigma
@@ -449,6 +450,7 @@ class InstanSeg(nn.Module):
 
         self.window_size = window_size
         self.num_instance_cap = 50
+        self.max_seeds = max_seeds
         self.bg_weight = bg_weight
 
         self.feature_engineering, self.feature_engineering_width = feature_engineering_generator(feature_engineering_function)
@@ -705,7 +707,7 @@ class InstanSeg(nn.Module):
                         device=None,
                         classifier=None,
                         cleanup_fragments: bool = False,
-                        max_seeds: int = 2000,
+                        max_seeds: int = None,
                         return_intermediate_objects: bool = False,
                         precomputed_crops: torch.Tensor = None,
                         precomputed_seeds: torch.Tensor = None,
@@ -775,13 +777,16 @@ class InstanSeg(nn.Module):
             
                 fields = fields + xxyy
 
-                fields_at_centroids = fields[:, local_centroids_idx[:, 0], local_centroids_idx[:, 1]]
+                if max_seeds is None:
+                    max_seeds = getattr(self, "max_seeds", 300)
 
-                if local_centroids_idx.shape[0] > max_seeds:
-                    print("Too many seeds, skipping", local_centroids_idx.shape[0])
-                    label = torch.zeros(mask_map.shape, dtype=int, device=mask_map.device).squeeze()
-                    labels.append(label)
-                    continue
+                if max_seeds is not None and local_centroids_idx.shape[0] > max_seeds:
+                    # Cap candidate seeds to the top max_seeds peaks based on confidence
+                    seed_scores = mask_map.squeeze()[local_centroids_idx[:, 0], local_centroids_idx[:, 1]]
+                    top_indices = torch.topk(seed_scores, k=max_seeds).indices
+                    local_centroids_idx = local_centroids_idx[top_indices]
+
+                fields_at_centroids = fields[:, local_centroids_idx[:, 0], local_centroids_idx[:, 1]]
                 
                 C = fields_at_centroids.shape[1]
 

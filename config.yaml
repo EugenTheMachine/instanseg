@@ -18,6 +18,7 @@ training:
   warmup_epochs: 2
   resume: false
   amp: false
+  max_seeds: 300
 
 model:
   model_name: "InstanSeg_UNet"

@@ -6,6 +6,7 @@ from instanseg.utils.metrics import _robust_average_precision, _robust_f1_mean_c
 
 from instanseg.utils.augmentations import Augmentations
 import time
+import gc
 
 from instanseg.utils.utils import show_images
 import warnings
@@ -84,12 +85,17 @@ def test_epoch(test_model,
                best_f1=None):
     start = time.time()
 
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+
     test_model.eval()
     test_loss = []
 
     current_f1_list = []
     device_type = torch.device(test_device).type
     use_amp = bool(getattr(args, "amp", False)) and (device_type == "cuda")
+    max_seeds = getattr(args, "max_seeds", None)
 
     with torch.no_grad():
         for image_batch, labels_batch, _ in tqdm(test_dataloader, disable=args.on_cluster):
@@ -105,7 +111,10 @@ def test_epoch(test_model,
 
 
             if labels.type() != 'torch.cuda.FloatTensor' and labels.type() != 'torch.FloatTensor':
-                predicted_labels = torch.stack([postprocessing_fn(out) for out in output])
+                if max_seeds is not None:
+                    predicted_labels = torch.stack([postprocessing_fn(out, max_seeds=max_seeds) for out in output])
+                else:
+                    predicted_labels = torch.stack([postprocessing_fn(out) for out in output])
                 f1i = _robust_average_precision(labels.clone(), predicted_labels.clone(),
                                                threshold=iou_threshold)
 
@@ -145,6 +154,10 @@ def test_epoch(test_model,
                                                                                  "Prediction: Cells"] + ["Out" for _ in
                                                                                                          output[0]],
                         labels=[1, 2, 3, 4], n_cols=5)
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
 
     end = time.time()
     return np.mean(test_loss), mean1_f1, end - start

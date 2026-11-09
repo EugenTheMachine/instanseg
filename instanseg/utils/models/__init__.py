@@ -1,3 +1,13 @@
+from instanseg.utils.models.InstanSeg_UNet_v2 import (
+    InstanSeg_UNetV2,
+    Instanseg_Unet_v2,
+    instanseg_unet_v2,
+    ResidualBlock,
+    MultiscaleDilatedBottleneck,
+    V2DecoderStage,
+    V2DecoderGroup,
+)
+
 from instanseg.utils.models.InstanSeg_UNet import (
     UNet,
     InstanSeg_UNet,
@@ -74,4 +84,11 @@ __all__ = [
     "mednext_unet",
     "MedNeXt_InstanSeg",
     "MedNeXt_InstanSeg_Deep",
+    "InstanSeg_UNetV2",
+    "Instanseg_Unet_v2",
+    "instanseg_unet_v2",
+    "ResidualBlock",
+    "MultiscaleDilatedBottleneck",
+    "V2DecoderStage",
+    "V2DecoderGroup",
 ]

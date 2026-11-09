@@ -86,9 +86,12 @@ class UNet(nn.Module):
             elif mt_lower in ("mednext_unet", "mednext", "mednext_instanseg", "mednext_instanseg_deep"):
                 from instanseg.utils.models.MedNeXt_UNet import MedNeXt_UNet
                 target_cls = MedNeXt_UNet
+            elif mt_lower in ("instanseg_unet_v2",):
+                from instanseg.utils.models.InstanSeg_UNet_v2 import InstanSeg_UNetV2
+                target_cls = InstanSeg_UNetV2
             else:
                 raise ValueError(
-                    f"Unsupported model_type: '{model_type}'. Expected 'instanseg_unet', 'improved_unet', 'efficientunetb0', 'convnext_unet', or 'mednext_unet'."
+                    f"Unsupported model_type: '{model_type}'. Expected 'instanseg_unet', 'improved_unet', 'efficientunetb0', 'convnext_unet', 'mednext_unet', or 'instanseg_unet_v2'."
                 )
 
             return super(UNet, target_cls).__new__(target_cls)

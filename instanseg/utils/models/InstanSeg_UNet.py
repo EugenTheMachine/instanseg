@@ -323,7 +323,10 @@ class DecoderBlock(nn.Module):
         super().__init__()
 
         self.conv0 = conv_norm_act(in_channels, out_channels, 1, norm, act)
-        self.conv_skip = conv_norm_act(skip_channels, out_channels, 1, norm, act)
+        if skip_channels and skip_channels > 0:
+            self.conv_skip = conv_norm_act(skip_channels, out_channels, 1, norm, act)
+        else:
+            self.conv_skip = None
         self.conv1 = conv_norm_act(in_channels, out_channels, 3, norm, act)
         self.conv2 = conv_norm_act(out_channels, out_channels, 3, norm, act)
         self.conv3 = conv_norm_act(out_channels, out_channels, 3, norm, act)
@@ -336,7 +339,10 @@ class DecoderBlock(nn.Module):
         x = F.interpolate(x, scale_factor=2, mode="nearest")
         proj = self.conv0(x)
         x = self.conv1(x)
-        x = proj + self.conv2(x + self.conv_skip(skip))
+        if skip is not None and self.conv_skip is not None:
+            x = proj + self.conv2(x + self.conv_skip(skip))
+        else:
+            x = proj + self.conv2(x)
         x = x + self.conv4(self.conv3(x))
         return x
 
@@ -750,7 +756,7 @@ improved_unet = ImprovedUNet
 
 
 # =====================================================================
-# 5. MOBILENETV2 ENCODER, DECODER AND FULL MODEL
+# 5. MOBILENETV2 ENCODER AND FULL MODEL (Using Standard InstanSeg Decoder)
 # =====================================================================
 
 class MobileNetV2Encoder(nn.Module):
@@ -818,71 +824,8 @@ class MobileNetV2Encoder(nn.Module):
         return bottleneck, skips
 
 
-class MobileNetV2DecoderBlock(nn.Module):
-    """
-    Upsampling decoder block adapted for InstanSeg architecture.
-    Uses nearest neighbor upsampling to match other InstanSeg decoders.
-    Implements dual-residual structure similar to other InstanSeg decoders.
-    """
-
-    def __init__(
-        self,
-        in_channels: int,
-        skip_channels: int,
-        out_channels: int,
-        norm: str = "BATCH",
-        act: str = "ReLU",
-        dropout: float = 0.0,
-    ):
-        super().__init__()
-        
-        # Projection layers
-        self.conv0 = conv_norm_act(in_channels, out_channels, 1, norm, act)
-        
-        if skip_channels and skip_channels > 0:
-            self.conv_skip = conv_norm_act(skip_channels, out_channels, 1, norm, act)
-        else:
-            self.conv_skip = None
-        
-        # Main processing path
-        self.conv1 = conv_norm_act(in_channels, out_channels, 3, norm, act)
-        self.conv2 = conv_norm_act(out_channels, out_channels, 3, norm, act)
-        self.conv3 = conv_norm_act(out_channels, out_channels, 3, norm, act)
-        self.conv4 = conv_norm_act(out_channels, out_channels, 3, norm, act)
-        
-        self.dropout = nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()
-
-    def forward(
-        self, x: torch.Tensor, skip: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        # Nearest neighbor upsampling (matches other InstanSeg decoders)
-        x = F.interpolate(x, scale_factor=2, mode="nearest")
-        
-        # Dual-residual architecture
-        proj = self.conv0(x)
-        x = self.conv1(x)
-        
-        if skip is not None and self.conv_skip is not None:
-            # Guard against spatial mismatch if input H or W is not divisible by 32
-            if x.shape[-2:] != skip.shape[-2:]:
-                x = F.interpolate(x, size=skip.shape[-2:], mode="nearest")
-            skip_proj = self.conv_skip(skip)
-            x = proj + self.conv2(x + skip_proj)
-        else:
-            x = proj + self.conv2(x)
-        
-        # Second residual path
-        x = x + self.conv4(self.conv3(x))
-        x = self.dropout(x)
-        
-        return x
-
-
 class MobileNetV2Decoder(nn.Module):
-    """
-    Sequential decoder for MobileNetV2 encoder with multi-head output support.
-    Compatible with InstanSeg's multi-task learning framework.
-    """
+    """InstanSeg decoder blocks configured for MobileNetV2 feature channels."""
 
     def __init__(
         self,
@@ -890,47 +833,33 @@ class MobileNetV2Decoder(nn.Module):
         out_channels: List[int],
         norm: str = "BATCH",
         act: str = "ReLU",
-        dropout: float = 0.0,
     ):
         super().__init__()
         self.decoder = nn.ModuleList([
-            MobileNetV2DecoderBlock(in_ch, skip_ch, out_ch, norm=norm, act=act, dropout=dropout)
+            DecoderBlock(in_ch, skip_ch, out_ch, norm=norm, act=act)
             for in_ch, skip_ch, out_ch in stage_channels
         ])
-
-        # Final output heads (no normalization or activation on outputs)
         final_norm = norm if (norm is not None) and norm.lower() != "instance" else None
         self.final_block = nn.ModuleList([
-            conv_norm_act(stage_channels[-1][2], out_channel, 1, norm=None, act=None)
+            conv_norm_act(stage_channels[-1][2], out_channel, 1, norm=final_norm, act=None)
             for out_channel in out_channels
         ])
 
-    def forward(self, x: torch.Tensor, skips: List[torch.Tensor]) -> torch.Tensor:
-        # Process through decoder stages with skip connections
-        # Pad skips with None for stages without skip connections
-        # skips = [skip1@H/2, skip2@H/4, skip3@H/8, skip4@H/16]
-        # After reverse and padding: [skip4, skip3, skip2, skip1, None]
-        padded_skips = skips[::-1] + [None] * (len(self.decoder) - len(skips))
-        
-        for layer, skip in zip(self.decoder, padded_skips):
+    def forward(self, x: torch.Tensor, skips: List[Optional[torch.Tensor]]) -> torch.Tensor:
+        for layer, skip in zip(self.decoder, skips[::-1]):
             x = layer(x, skip)
-        
-        # Apply multi-head final convolutions and concatenate
-        x = torch.cat([final_block(x) for final_block in self.final_block], dim=1)
-        return x
+        return torch.cat([final_block(x) for final_block in self.final_block], dim=1)
 
 
 class MobileNetV2_UNet(UNet):
     """
     U-Net with MobileNetV2 encoder backbone adapted for InstanSeg instance segmentation.
     
-    This architecture provides an efficient alternative to the standard InstanSeg_UNet,
-    offering ~60% parameter reduction while maintaining competitive accuracy.
+    Uses the original InstanSeg decoder blocks with MobileNetV2-compatible channels.
     
     Key features:
     - MobileNetV2 encoder with inverted residual blocks
-    - 5-stage encoder (H/2, H/4, H/8, H/16, H/32 downsampling)
-    - Dual-residual decoder blocks
+    - Standard InstanSeg decoder (proven and tested)
     - Multi-head output support for multi-task learning
     - Optional pretrained ImageNet weights
     """
@@ -994,9 +923,9 @@ class MobileNetV2_UNet(UNet):
             (16, 0, 16),      # H/2 to H (no skip)
         ]
 
-        # Create decoders (supports multiple decoders for multi-task learning)
+        # The last decoder stage upsamples to input resolution without a skip.
         self.decoders = nn.ModuleList([
-            MobileNetV2Decoder(stage_channels, out_channel, norm=norm, act=act, dropout=dropout)
+            MobileNetV2Decoder(stage_channels, out_channel, norm=norm, act=act)
             for out_channel in out_channels
         ])
 
@@ -1008,12 +937,15 @@ class MobileNetV2_UNet(UNet):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Validate input (MobileNetV2 has 5 pooling stages -> divisor=32)
         self._validate_input_tensor(x, divisor=32)
-        
+
         # Encode
         bottleneck, skips = self.encoder(x)
-        
+
+        # Reverse in the decoder yields [H/16, H/8, H/4, H/2, None].
+        padded_skips = [None] + skips
+
         # Decode with all decoders and concatenate outputs
-        return torch.cat([decoder(bottleneck, skips) for decoder in self.decoders], dim=1)
+        return torch.cat([decoder(bottleneck, padded_skips) for decoder in self.decoders], dim=1)
 
 
 # Aliases for convenience

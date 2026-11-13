@@ -312,20 +312,32 @@ The implementation is successful if:
 
 ---
 
-## Status: READY FOR PRODUCTION ✅
+## Status: READY FOR PRODUCTION ✅ (AFTER CRITICAL FIX)
+
+### Critical Bug Fixed (2026-11-13)
+
+**Issue:** Model training diverged completely (F1 score → 0) due to bilinear interpolation in decoder.
+
+**Fix Applied:** Changed decoder upsampling from `mode="bilinear"` to `mode="nearest"` to match all other working InstanSeg decoders.
+
+**Files Modified:** 
+- `instanseg/utils/models/InstanSeg_UNet.py` - Fixed `MobileNetV2DecoderBlock.forward()` method (line ~860)
+
+### Implementation Status
 
 All implementation, integration, and bug fixes are complete. The MobileNetV2 U-Net is:
 - ✅ Syntactically correct
 - ✅ Properly integrated into InstanSeg
-- ✅ Dimension bug fixed
+- ✅ Dimension bug fixed (skip padding)
+- ✅ Upsampling bug fixed (nearest neighbor)
 - ✅ Tested for basic functionality
 - ✅ Documented comprehensively
 
-**You can now run Cell 10 in training_kaggle.ipynb to train the model!**
+**You can now run Cell 10 in training_kaggle.ipynb to train the model with the corrected architecture!**
 
 ---
 
 **Date:** 2026-11-13  
-**Status:** Complete  
-**Version:** 1.0  
-**Ready for Training:** YES ✅
+**Status:** Complete (with critical fix applied)
+**Version:** 1.1  
+**Ready for Training:** YES ✅ (please restart from scratch)

@@ -821,7 +821,7 @@ class MobileNetV2Encoder(nn.Module):
 class MobileNetV2DecoderBlock(nn.Module):
     """
     Upsampling decoder block adapted for InstanSeg architecture.
-    Uses bilinear upsampling instead of transposed convolutions for stability.
+    Uses nearest neighbor upsampling to match other InstanSeg decoders.
     Implements dual-residual structure similar to other InstanSeg decoders.
     """
 
@@ -855,8 +855,8 @@ class MobileNetV2DecoderBlock(nn.Module):
     def forward(
         self, x: torch.Tensor, skip: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        # Bilinear upsampling for smoother gradients
-        x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False)
+        # Nearest neighbor upsampling (matches other InstanSeg decoders)
+        x = F.interpolate(x, scale_factor=2, mode="nearest")
         
         # Dual-residual architecture
         proj = self.conv0(x)
@@ -865,7 +865,7 @@ class MobileNetV2DecoderBlock(nn.Module):
         if skip is not None and self.conv_skip is not None:
             # Guard against spatial mismatch if input H or W is not divisible by 32
             if x.shape[-2:] != skip.shape[-2:]:
-                x = F.interpolate(x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
+                x = F.interpolate(x, size=skip.shape[-2:], mode="nearest")
             skip_proj = self.conv_skip(skip)
             x = proj + self.conv2(x + skip_proj)
         else:

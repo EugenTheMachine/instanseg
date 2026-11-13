@@ -907,7 +907,12 @@ class MobileNetV2Decoder(nn.Module):
 
     def forward(self, x: torch.Tensor, skips: List[torch.Tensor]) -> torch.Tensor:
         # Process through decoder stages with skip connections
-        for layer, skip in zip(self.decoder, skips[::-1]):
+        # Pad skips with None for stages without skip connections
+        # skips = [skip1@H/2, skip2@H/4, skip3@H/8, skip4@H/16]
+        # After reverse and padding: [skip4, skip3, skip2, skip1, None]
+        padded_skips = skips[::-1] + [None] * (len(self.decoder) - len(skips))
+        
+        for layer, skip in zip(self.decoder, padded_skips):
             x = layer(x, skip)
         
         # Apply multi-head final convolutions and concatenate
@@ -973,13 +978,14 @@ class MobileNetV2_UNet(UNet):
             out_channels = [list(out_channels)]
 
         # Decoder block channel configurations: (in_channels, skip_channels, out_channels)
-        # MobileNetV2 encoder outputs: (16, 24, 32, 96, 1280)
+        # MobileNetV2 encoder outputs: (16, 24, 32, 96, 1280) at [H/2, H/4, H/8, H/16, H/32]
+        # Encoder provides 4 skip connections: [skip1@H/2, skip2@H/4, skip3@H/8, skip4@H/16]
         # 
-        # Stage 0: 1280 -> 96  (skip: 96,  H/32 -> H/16)
-        # Stage 1: 96   -> 32  (skip: 32,  H/16 -> H/8)
-        # Stage 2: 32   -> 24  (skip: 24,  H/8  -> H/4)
-        # Stage 3: 24   -> 16  (skip: 16,  H/4  -> H/2)
-        # Stage 4: 16   -> 16  (skip: 0,   H/2  -> H)
+        # Stage 0: 1280 -> 96  (skip4: 96ch,  H/32 -> H/16)
+        # Stage 1: 96   -> 32  (skip3: 32ch,  H/16 -> H/8)
+        # Stage 2: 32   -> 24  (skip2: 24ch,  H/8  -> H/4)
+        # Stage 3: 24   -> 16  (skip1: 16ch,  H/4  -> H/2)
+        # Stage 4: 16   -> 16  (None: 0ch,    H/2  -> H)
         stage_channels = [
             (1280, 96, 96),   # Bottleneck to H/16
             (96, 32, 32),     # H/16 to H/8

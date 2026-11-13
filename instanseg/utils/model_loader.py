@@ -148,12 +148,25 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
             )
         # MobileNetV2 and EfficientNet backbones have fixed feature dims
         elif model_str in ("mobilenetv2_unet", "mobilenet_unet", "mobilenetv2", "unetv2", "efficientunetb0"):
+            model_kwargs = {}
+            if model_str in ("mobilenetv2_unet", "mobilenet_unet", "mobilenetv2", "unetv2"):
+                use_pretrained_backbone = bool(
+                    build_model_dictionary.get("pretrained_backbone", False)
+                )
+                model_kwargs["weights"] = (
+                    True
+                    if use_pretrained_backbone
+                    and build_model_dictionary.get("load_pretrained_backbone_weights", True)
+                    else None
+                )
+                model_kwargs["normalize_input"] = use_pretrained_backbone
             model = UNet(
                 model_type=model_str,
                 in_channels=dim_in,
                 out_channels=out_channels,
                 norm=build_model_dictionary["norm"],
                 dropout=build_model_dictionary["dropprob"],
+                **model_kwargs,
             )
         elif model_str in ("mednext_unet", "mednext", "mednext_instanseg", "mednext_instanseg_deep"):
             model = UNet(

@@ -24,6 +24,8 @@ model:
   model_name: "InstanSeg_UNet"
   num_classes: 2
   freeze_backbone_epochs: 0
+  # First use downloads torchvision's ImageNet weights if they are not cached.
+  pretrained_backbone: true
   dropout: 0.0
   embedding_mode: "center-seed"
 
@@ -32,4 +34,4 @@ optimizer:
   learning_rate: 0.001
   weight_decay: 0.0001
   momentum: 0.9
-  backbone_lr_mult: 1.0
+  backbone_lr_mult: 0.1

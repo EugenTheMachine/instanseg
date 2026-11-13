@@ -769,6 +769,7 @@ class MobileNetV2Encoder(nn.Module):
         self,
         in_channels: int = 3,
         weights=None,
+        normalize_input: Optional[bool] = None,
         freeze: bool = False,
     ):
         super().__init__()
@@ -778,12 +779,32 @@ class MobileNetV2Encoder(nn.Module):
         if weights == "default" or weights is True:
             from torchvision.models import MobileNet_V2_Weights
             weights = MobileNet_V2_Weights.DEFAULT
+        elif weights is False:
+            weights = None
+
+        self.use_imagenet_normalization = (
+            weights is not None if normalize_input is None else normalize_input
+        )
+        if self.use_imagenet_normalization and in_channels not in (1, 3):
+            raise ValueError("Pretrained MobileNetV2 supports only 1- or 3-channel inputs.")
         
         backbone = models.mobilenet_v2(weights=weights)
         features = backbone.features
 
-        # Modify first layer if input channels != 3
-        if in_channels != 3:
+        if self.use_imagenet_normalization:
+            self.register_buffer(
+                "imagenet_mean",
+                torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1),
+                persistent=False,
+            )
+            self.register_buffer(
+                "imagenet_std",
+                torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1),
+                persistent=False,
+            )
+
+        # Modify first layer if input channels != 3 and pretrained RGB weights are not usable.
+        if in_channels != 3 and not (in_channels == 1 and self.use_imagenet_normalization):
             orig_conv = features[0][0]
             features[0][0] = nn.Conv2d(
                 in_channels,
@@ -812,6 +833,11 @@ class MobileNetV2Encoder(nn.Module):
     def forward(
         self, x: torch.Tensor
     ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        if self.use_imagenet_normalization:
+            if x.shape[1] == 1:
+                x = x.expand(-1, 3, -1, -1)
+            x = (x - self.imagenet_mean) / self.imagenet_std
+
         skip1 = self.stage1(x)   # H/2, 16 channels
         skip2 = self.stage2(skip1)  # H/4, 24 channels
         skip3 = self.stage3(skip2)  # H/8, 32 channels
@@ -872,6 +898,7 @@ class MobileNetV2_UNet(UNet):
         dropout: float = 0.0,
         act: str = "ReLU",
         weights=None,
+        normalize_input: Optional[bool] = None,
         freeze_encoder: bool = False,
         model_type: str = "mobilenetv2_unet",
         **kwargs,
@@ -897,6 +924,7 @@ class MobileNetV2_UNet(UNet):
         self.encoder = MobileNetV2Encoder(
             in_channels=in_channels,
             weights=weights,
+            normalize_input=normalize_input,
             freeze=freeze_encoder
         )
 

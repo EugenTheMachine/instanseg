@@ -423,6 +423,47 @@ class TestModelLoaderAndLossIntegration:
         out = model(x)
         assert out.shape == (1, 5, 64, 64)
 
+    def test_build_mobilenet_with_pretrained_backbone(self, monkeypatch):
+        import torchvision.models as torchvision_models
+
+        original_mobilenet_v2 = torchvision_models.mobilenet_v2
+        requested_weights = []
+
+        def fake_mobilenet_v2(*, weights):
+            requested_weights.append(weights)
+            return original_mobilenet_v2(weights=None)
+
+        monkeypatch.setattr(torchvision_models, "mobilenet_v2", fake_mobilenet_v2)
+        cfg = {
+            "model_str": "mobilenetv2_unet",
+            "dim_in": 3,
+            "dim_coords": 2,
+            "n_sigma": 2,
+            "dim_seeds": 1,
+            "multihead": False,
+            "norm": "BATCH",
+            "dropprob": 0.0,
+            "pretrained_backbone": True,
+        }
+
+        model = build_model_from_dict(cfg)
+        output = model(torch.rand(1, 3, 64, 64))
+
+        assert requested_weights == [torchvision_models.MobileNet_V2_Weights.DEFAULT]
+        assert model.encoder.use_imagenet_normalization
+        assert output.shape == (1, 5, 64, 64)
+
+        cfg["dim_in"] = 1
+        grayscale_model = build_model_from_dict(cfg)
+        grayscale_output = grayscale_model(torch.rand(1, 1, 64, 64))
+        assert requested_weights[-1] == torchvision_models.MobileNet_V2_Weights.DEFAULT
+        assert grayscale_output.shape == (1, 5, 64, 64)
+
+        cfg["pretrained_backbone"] = False
+        scratch_model = build_model_from_dict(cfg)
+        assert requested_weights[-1] is None
+        assert not scratch_model.encoder.use_imagenet_normalization
+
     def test_build_model_from_dict_dim_in_zero_or_none(self):
         for dim in [0, None]:
             cfg = {

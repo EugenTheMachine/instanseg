@@ -60,6 +60,7 @@ def _load_default_config() -> Dict[str, Any]:
             "model_name": "InstanSeg_UNet",
             "num_classes": 2,
             "freeze_backbone_epochs": 0,
+            "pretrained_backbone": True,
             "dropout": 0.0,
             "embedding_mode": "center-seed",
         },
@@ -68,7 +69,7 @@ def _load_default_config() -> Dict[str, Any]:
             "learning_rate": 0.001,
             "weight_decay": 0.0001,
             "momentum": 0.9,
-            "backbone_lr_mult": 1.0,
+            "backbone_lr_mult": 0.1,
         },
     }
 
@@ -167,6 +168,7 @@ class InstanSegModel:
             "model_name": ("model", "model_name"),
             "num_classes": ("model", "num_classes"),
             "freeze_backbone_epochs": ("model", "freeze_backbone_epochs"),
+            "pretrained_backbone": ("model", "pretrained_backbone"),
             "dropout": ("model", "dropout"),
             "embedding_mode": ("model", "embedding_mode"),
             "learning_rate": ("optimizer", "learning_rate"),
@@ -216,7 +218,11 @@ class InstanSegModel:
     def _init_model_from_checkpoint(self, ckp_path: Path):
         """Initializes model architecture and loads weights from checkpoint."""
         flat_cfg = _flatten_config(self.config)
-        self.model = build_model_from_dict(flat_cfg, random_seed=flat_cfg.get("seed", 42))
+        checkpoint_model_cfg = dict(flat_cfg)
+        checkpoint_model_cfg["load_pretrained_backbone_weights"] = False
+        self.model = build_model_from_dict(
+            checkpoint_model_cfg, random_seed=flat_cfg.get("seed", 42)
+        )
         instanseg_loss_instance = InstanSegLoss(
             binary_loss_fn_str="lovasz_hinge",
             seed_loss_fn="l1_distance",
@@ -329,12 +335,29 @@ class InstanSegModel:
         lr = float(self.config["optimizer"]["learning_rate"])
         weight_decay = float(self.config["optimizer"]["weight_decay"])
         optimizer_type = str(self.config["optimizer"].get("type", "AdamW"))
+        mobile_model_names = {"mobilenetv2_unet", "mobilenet_unet", "mobilenetv2", "unetv2"}
+        is_mobilenet = str(self.config["model"]["model_name"]).lower().replace("-", "_") in mobile_model_names
+        backbone_lr_mult = float(self.config["optimizer"].get("backbone_lr_mult", 0.1))
+        if is_mobilenet:
+            backbone_lr = lr * backbone_lr_mult
+            backbone_params = list(self.model.encoder.parameters())
+            backbone_param_ids = {id(param) for param in backbone_params}
+            head_params = [
+                param for param in self.model.parameters()
+                if id(param) not in backbone_param_ids
+            ]
+            param_groups = [
+                {"params": backbone_params, "lr": backbone_lr, "base_lr": backbone_lr},
+                {"params": head_params, "lr": lr, "base_lr": lr},
+            ]
+        else:
+            param_groups = [{"params": self.model.parameters(), "lr": lr, "base_lr": lr}]
 
         if optimizer_type.lower() == "sgd":
             momentum = float(self.config["optimizer"].get("momentum", 0.9))
-            optimizer = torch.optim.SGD(self.model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
+            optimizer = torch.optim.SGD(param_groups, lr=lr, momentum=momentum, weight_decay=weight_decay)
         else:
-            optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=weight_decay)
+            optimizer = torch.optim.AdamW(param_groups, lr=lr, weight_decay=weight_decay)
 
         amp_enabled = bool(self.config["training"].get("amp", False))
         use_amp = amp_enabled and (self.device.type == "cuda")
@@ -370,13 +393,30 @@ class InstanSegModel:
                 ckp_file = self.checkpoint_path
 
             if ckp_file and ckp_file.exists():
+                base_lrs = [group["base_lr"] for group in optimizer.param_groups]
                 ckp = load_checkpoint(
                     ckp_file,
                     self.model,
-                    optimizer=optimizer,
                     scaler=scaler,
                     device=self.device,
                 )
+                optimizer_state = ckp.get("optimizer_state_dict")
+                if optimizer_state is not None:
+                    saved_group_sizes = [
+                        len(group["params"]) for group in optimizer_state["param_groups"]
+                    ]
+                    current_group_sizes = [
+                        len(group["params"]) for group in optimizer.param_groups
+                    ]
+                    if saved_group_sizes == current_group_sizes:
+                        optimizer.load_state_dict(optimizer_state)
+                        for group, base_lr in zip(optimizer.param_groups, base_lrs):
+                            group.setdefault("base_lr", base_lr)
+                    else:
+                        logger.warning(
+                            "Optimizer state was not restored because checkpoint "
+                            "parameter groups do not match the current model."
+                        )
                 if "rng_states" in ckp:
                     set_rng_states(ckp["rng_states"])
                 start_epoch = ckp.get("epoch", 0) + 1
@@ -387,7 +427,13 @@ class InstanSegModel:
             else:
                 logger.info("Resume requested but no checkpoint found. Starting model training from scratch.")
         else:
-            logger.info("Model initialized from scratch")
+            if is_mobilenet and flat_cfg.get("pretrained_backbone", False):
+                logger.info(
+                    "MobileNetV2 initialized with ImageNet-pretrained encoder; "
+                    "decoder and output heads initialized from scratch"
+                )
+            else:
+                logger.info("Model initialized from scratch")
 
         total_epochs = int(self.config["training"]["epochs"])
         patience_limit = int(self.config["training"]["patience"])
@@ -396,13 +442,18 @@ class InstanSegModel:
 
         for epoch in range(start_epoch, total_epochs + 1):
             if warmup_epochs > 0 and epoch <= warmup_epochs:
-                current_lr = lr * (epoch / float(warmup_epochs))
+                warmup_factor = epoch / float(warmup_epochs)
                 for param_group in optimizer.param_groups:
-                    param_group["lr"] = current_lr
-                logger.info(f"Warmup Epoch {epoch}/{warmup_epochs}: Learning rate set to {current_lr:.6f}")
+                    param_group["lr"] = param_group["base_lr"] * warmup_factor
+                lr_message = f"head={lr * warmup_factor:.6f}"
+                if is_mobilenet:
+                    lr_message += (
+                        f", backbone={lr * backbone_lr_mult * warmup_factor:.6f}"
+                    )
+                logger.info(f"Warmup Epoch {epoch}/{warmup_epochs}: {lr_message}")
             elif warmup_epochs > 0 and epoch == warmup_epochs + 1:
                 for param_group in optimizer.param_groups:
-                    param_group["lr"] = lr
+                    param_group["lr"] = param_group["base_lr"]
 
             logger.info(f"EPOCH {epoch}/{total_epochs}")
 

@@ -21,7 +21,10 @@ from instanseg.utils.checkpointing import (
 from instanseg.utils.data_loader import read_directory_dataset, get_loaders
 from instanseg.utils.metrics import compute_dataset_metrics
 from instanseg.utils.model_loader import build_model_from_dict
-from instanseg.utils.loss.instanseg_loss import InstanSeg as InstanSegLoss
+from instanseg.utils.loss.instanseg_loss import (
+    InstanSeg as InstanSegLoss,
+    torch_peak_local_max,
+)
 from instanseg.utils.AI_utils import train_epoch
 
 
@@ -486,6 +489,12 @@ class InstanSegModel:
                 val_losses = []
                 val_preds = []
                 val_targets = []
+                val_seed_p99 = []
+                val_seed_max = []
+                val_seed_above_threshold = []
+                val_seed_peak_counts = []
+                val_pred_instance_counts = []
+                val_target_instance_counts = []
 
                 with torch.no_grad():
                     for img_b, lbl_b, _ in tqdm(val_loader, desc="Validation", disable=False):
@@ -500,12 +509,41 @@ class InstanSegModel:
                         if isinstance(out, list):
                             out = out[0]
                         for i in range(out.shape[0]):
+                            seed_map = out[i, -1].float()
+                            val_seed_p99.append(torch.quantile(seed_map, 0.99).item())
+                            val_seed_max.append(seed_map.max().item())
+                            val_seed_above_threshold.append((seed_map > 0.45).float().mean().item())
+                            seed_mask = seed_map / 15 + 0.5
+                            val_seed_peak_counts.append(
+                                torch_peak_local_max(
+                                    seed_mask,
+                                    neighbourhood_size=4,
+                                    minimum_value=0.5,
+                                ).shape[0]
+                            )
+
                             pred_mask = instanseg_loss_instance.postprocessing(out[i], max_seeds=max_seeds)
                             val_preds.append(pred_mask)
-                            val_targets.append(lbl_b[i])
+                            target_mask = lbl_b[i]
+                            val_targets.append(target_mask)
+                            val_pred_instance_counts.append(
+                                torch.unique(pred_mask[pred_mask > 0]).numel()
+                            )
+                            val_target_instance_counts.append(
+                                torch.unique(target_mask[target_mask > 0]).numel()
+                            )
 
                 val_loss = float(np.mean(val_losses))
                 val_metrics = compute_dataset_metrics(val_targets, val_preds)
+                if is_mobilenet:
+                    logger.info(
+                        "Validation decode diagnostic - "
+                        f"seed raw p99/max: {np.mean(val_seed_p99):.3f}/{np.mean(val_seed_max):.3f}, "
+                        f"fraction > 0.45: {np.mean(val_seed_above_threshold):.3f}, "
+                        f"seed peaks/image: {np.mean(val_seed_peak_counts):.1f}, "
+                        f"predicted instances/image: {np.mean(val_pred_instance_counts):.1f}, "
+                        f"ground-truth instances/image: {np.mean(val_target_instance_counts):.1f}"
+                    )
 
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()

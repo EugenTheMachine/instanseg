@@ -126,7 +126,7 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
         build_model_dictionary["dropprob"] = 0.0
 
     model_str = build_model_dictionary["model_str"].lower().replace("-", "_")
-    if model_str in ["instanseg_unet", "improved_unet", "improvedunet", "improved_instanseg_unet", "efficientunetb0", "convnext_unet", "convnext_tiny", "convnext", "mednext_unet", "mednext", "mednext_instanseg", "mednext_instanseg_deep", "instanseg_unet_v2", "mobilenetv2_unet", "mobilenet_unet", "mobilenetv2", "unetv2"]:
+    if model_str in ["instanseg_unet", "unet_v3", "unet_v4", "unet_v5", "improved_unet", "improvedunet", "improved_instanseg_unet", "efficientunetb0", "convnext_unet", "convnext_tiny", "convnext", "mednext_unet", "mednext", "mednext_instanseg", "mednext_instanseg_deep", "instanseg_unet_v2", "mobilenetv2_unet", "mobilenet_unet", "mobilenetv2", "unetv2"]:
         from instanseg.utils.models.InstanSeg_UNet import UNet
         print(f"Generating {model_str}")
         multihead = build_model_dictionary["multihead"]

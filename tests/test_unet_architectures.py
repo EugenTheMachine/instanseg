@@ -6,6 +6,9 @@ from pathlib import Path
 from instanseg.utils.models.InstanSeg_UNet import (
     UNet,
     InstanSeg_UNet,
+    UNetV3,
+    UNetV4,
+    UNetV5,
     MedNeXt_UNet,
     MedNeXtBlock2D,
     MedNeXtDownBlock2D,
@@ -14,6 +17,7 @@ from instanseg.utils.models.InstanSeg_UNet import (
     LayerNorm2d,
     ImprovedUNet,
     ImprovedDecoderBlock,
+    V4DecoderBlock,
     EfficientUNetB0,
     EfficientEncoder,
     EfficientNetEncoder,
@@ -693,6 +697,170 @@ class TestImprovedUNet:
         out = model(x)
         assert out.shape == (1, 5, 64, 64)
 
+
+class TestUNetV3:
+    def test_factory_uses_baseline_structure_with_gelu(self):
+        baseline = UNet(model_type="instanseg_unet", in_channels=3, out_channels=[[2, 2, 1]], layers=[32, 16, 8, 4])
+        model = UNet(model_type="unet_v3", in_channels=3, out_channels=[[2, 2, 1]], layers=[32, 16, 8, 4])
+
+        assert isinstance(model, UNetV3)
+        assert isinstance(model, InstanSeg_UNet)
+        assert model.model_type == "unet_v3"
+        assert model.state_dict().keys() == baseline.state_dict().keys()
+        assert all(isinstance(module, nn.GELU) for module in model.modules() if isinstance(module, (nn.GELU, nn.ReLU)))
+        assert all(isinstance(module, nn.ReLU) for module in baseline.modules() if isinstance(module, (nn.GELU, nn.ReLU)))
+
+        out = model(torch.randn(1, 3, 32, 32))
+        assert out.shape == (1, 5, 32, 32)
+
+    def test_explicit_activation_override(self):
+        model = UNet(model_type="unet_v3", in_channels=3, out_channels=[[2]], layers=[16, 8], act="SiLU")
+        activations = [module for module in model.modules() if isinstance(module, (nn.GELU, nn.ReLU, nn.SiLU))]
+        assert activations
+        assert all(isinstance(module, nn.SiLU) for module in activations)
+
+    def test_build_model_from_dict(self):
+        cfg = {
+            "model_str": "unet_v3",
+            "dim_in": 3,
+            "dim_coords": 2,
+            "n_sigma": 2,
+            "dim_seeds": 1,
+            "multihead": False,
+            "layers": [4, 8, 16, 32],
+            "norm": "BATCH",
+            "dropprob": 0.0,
+        }
+        model = build_model_from_dict(cfg)
+        assert isinstance(model, UNetV3)
+        assert all(isinstance(module, nn.GELU) for module in model.modules() if isinstance(module, (nn.GELU, nn.ReLU)))
+
+
+class TestUNetV4:
+    def test_factory_uses_baseline_encoder_and_parallel_skip_blocks(self):
+        baseline = UNet(
+            model_type="instanseg_unet",
+            in_channels=3,
+            out_channels=[[2, 2, 1]],
+            layers=[32, 16, 8, 4],
+        )
+        model = UNet(
+            model_type="unet_v4",
+            in_channels=3,
+            out_channels=[[2, 2, 1]],
+            layers=[32, 16, 8, 4],
+        )
+
+        assert isinstance(model, UNetV4)
+        assert isinstance(model, InstanSeg_UNet)
+        assert model.model_type == "unet_v4"
+        assert model.encoder.state_dict().keys() == baseline.encoder.state_dict().keys()
+        assert all(
+            model.encoder.state_dict()[key].shape == baseline.encoder.state_dict()[key].shape
+            for key in model.encoder.state_dict()
+        )
+        for decoder in model.decoders:
+            for block in decoder.decoder:
+                assert isinstance(block, V4DecoderBlock)
+                assert block.conv_skip is not None
+                assert block.conv_attn_skip is not None
+                assert block.attn_gate is not None
+                assert all(isinstance(module, nn.ReLU) for module in block.modules() if isinstance(module, (nn.GELU, nn.ReLU)))
+
+        output = model(torch.randn(1, 3, 32, 32))
+        assert output.shape == (1, 5, 32, 32)
+
+    def test_parallel_skip_paths_are_aligned_and_equally_weighted(self):
+        block = V4DecoderBlock(8, 4, 8, norm="BATCH", act="ReLU").eval()
+        x = torch.randn(1, 8, 8, 8)
+        skip = torch.randn(1, 4, 16, 16)
+
+        upsampled = torch.nn.functional.interpolate(x, scale_factor=2, mode="nearest")
+        projection = block.conv0(upsampled)
+        standard_skip = block.conv_skip(skip)
+        attention_skip = block.conv_attn_skip(skip)
+        gate = block.attn_gate(torch.cat([projection, attention_skip], dim=1))
+        fused_skip = 0.5 * (standard_skip + attention_skip * (0.5 + 0.5 * gate))
+
+        assert standard_skip.shape == attention_skip.shape == projection.shape
+        assert gate.min() >= 0 and gate.max() <= 1
+        assert torch.allclose(
+            fused_skip,
+            0.5 * standard_skip + 0.5 * (attention_skip * (0.5 + 0.5 * gate)),
+        )
+
+        captured = []
+        handle = block.conv2.register_forward_pre_hook(lambda module, args: captured.append(args[0].detach()))
+        try:
+            block(x, skip)
+        finally:
+            handle.remove()
+        expected_conv2_input = block.conv1(upsampled) + fused_skip
+        assert torch.allclose(captured[0], expected_conv2_input)
+
+    def test_build_model_from_dict(self):
+        cfg = {
+            "model_str": "unet_v4",
+            "dim_in": 3,
+            "dim_coords": 2,
+            "n_sigma": 2,
+            "dim_seeds": 1,
+            "multihead": False,
+            "layers": [4, 8, 16, 32],
+            "norm": "BATCH",
+            "dropprob": 0.0,
+        }
+        model = build_model_from_dict(cfg)
+        assert isinstance(model, UNetV4)
+        assert isinstance(model.decoders[0].decoder[0], V4DecoderBlock)
+
+
+class TestUNetV5:
+    def test_factory_uses_baseline_encoder_and_improved_decoder(self):
+        baseline = UNet(
+            model_type="instanseg_unet",
+            in_channels=3,
+            out_channels=[[2, 2, 1]],
+            layers=[32, 16, 8, 4],
+        )
+        model = UNet(
+            model_type="unet_v5",
+            in_channels=3,
+            out_channels=[[2, 2, 1]],
+            layers=[32, 16, 8, 4],
+        )
+
+        assert isinstance(model, UNetV5)
+        assert isinstance(model, InstanSeg_UNet)
+        assert model.model_type == "unet_v5"
+        assert model.encoder.state_dict().keys() == baseline.encoder.state_dict().keys()
+        assert all(
+            model.encoder.state_dict()[key].shape == baseline.encoder.state_dict()[key].shape
+            for key in model.encoder.state_dict()
+        )
+        for decoder in model.decoders:
+            for block in decoder.decoder:
+                assert isinstance(block, ImprovedDecoderBlock)
+                assert all(isinstance(module, nn.ReLU) for module in block.modules() if isinstance(module, (nn.GELU, nn.ReLU)))
+
+        output = model(torch.randn(1, 3, 32, 32))
+        assert output.shape == (1, 5, 32, 32)
+
+    def test_build_model_from_dict(self):
+        cfg = {
+            "model_str": "unet_v5",
+            "dim_in": 3,
+            "dim_coords": 2,
+            "n_sigma": 2,
+            "dim_seeds": 1,
+            "multihead": False,
+            "layers": [4, 8, 16, 32],
+            "norm": "BATCH",
+            "dropprob": 0.0,
+        }
+        model = build_model_from_dict(cfg)
+        assert isinstance(model, UNetV5)
+        assert isinstance(model.decoders[0].decoder[0], ImprovedDecoderBlock)
 
 
 class TestMedNeXtUNet:

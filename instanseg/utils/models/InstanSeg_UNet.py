@@ -61,7 +61,7 @@ def conv_norm_act(
 
 
 class UNet(nn.Module):
-    """Factory Base Class supporting instanseg_unet, improved_unet, efficientunetb0, and convnext_unet."""
+    """Factory base class for the supported U-Net model types."""
 
     def __new__(cls, *args, **kwargs):
         if cls is UNet:
@@ -71,12 +71,18 @@ class UNet(nn.Module):
 
             if model_type is None or not isinstance(model_type, str):
                 raise ValueError(
-                    "model_type must be specified as 'instanseg_unet', 'improved_unet', 'efficientunetb0', or 'convnext_unet'"
+                    "model_type must be specified as 'instanseg_unet', 'unet_v3', 'unet_v4', 'unet_v5', 'improved_unet', 'efficientunetb0', or 'convnext_unet'"
                 )
 
             mt_lower = model_type.lower().replace("-", "_")
             if mt_lower == "instanseg_unet":
                 target_cls = InstanSeg_UNet
+            elif mt_lower == "unet_v3":
+                target_cls = UNetV3
+            elif mt_lower == "unet_v4":
+                target_cls = UNetV4
+            elif mt_lower == "unet_v5":
+                target_cls = UNetV5
             elif mt_lower in ("improved_unet", "improved_instanseg_unet", "improvedunet"):
                 target_cls = ImprovedUNet
             elif mt_lower == "efficientunetb0":
@@ -93,7 +99,7 @@ class UNet(nn.Module):
                 target_cls = MobileNetV2_UNet
             else:
                 raise ValueError(
-                    f"Unsupported model_type: '{model_type}'. Expected 'instanseg_unet', 'improved_unet', 'efficientunetb0', 'convnext_unet', 'mednext_unet', 'instanseg_unet_v2', or 'mobilenetv2_unet'."
+                    f"Unsupported model_type: '{model_type}'. Expected 'instanseg_unet', 'unet_v3', 'unet_v4', 'unet_v5', 'improved_unet', 'efficientunetb0', 'convnext_unet', 'mednext_unet', 'instanseg_unet_v2', or 'mobilenetv2_unet'."
                 )
 
             return super(UNet, target_cls).__new__(target_cls)
@@ -398,6 +404,55 @@ class ImprovedDecoderBlock(nn.Module):
         return x
 
 
+class V4DecoderBlock(DecoderBlock):
+    """Baseline decoder block with equally weighted standard and gated skips."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        skip_channels: int,
+        out_channels: int,
+        norm: str = "BATCH",
+        act: str = "ReLU",
+        shallow: bool = False,
+    ):
+        super().__init__(
+            in_channels,
+            skip_channels,
+            out_channels,
+            norm=norm,
+            act=act,
+            shallow=shallow,
+        )
+        if skip_channels and skip_channels > 0:
+            self.conv_attn_skip = conv_norm_act(skip_channels, out_channels, 1, norm, act)
+            attn_conv = nn.Conv2d(out_channels * 2, 1, kernel_size=1)
+            nn.init.kaiming_normal_(attn_conv.weight, nonlinearity="sigmoid")
+            nn.init.constant_(attn_conv.bias, 1.0)
+            self.attn_gate = nn.Sequential(attn_conv, nn.Sigmoid())
+        else:
+            self.conv_attn_skip = None
+            self.attn_gate = None
+
+    def forward(self, x: torch.Tensor, skip: Optional[torch.Tensor] = None) -> torch.Tensor:
+        x = F.interpolate(x, scale_factor=2, mode="nearest")
+        proj = self.conv0(x)
+        x = self.conv1(x)
+
+        if skip is not None and self.conv_skip is not None and self.conv_attn_skip is not None:
+            standard_skip = self.conv_skip(skip)
+            attention_skip = self.conv_attn_skip(skip)
+            attn_weight = self.attn_gate(torch.cat([proj, attention_skip], dim=1))
+            gated_skip = attention_skip * (0.5 + 0.5 * attn_weight)
+            fused_skip = 0.5 * (standard_skip + gated_skip)
+            x = proj + self.conv2(x + fused_skip)
+        else:
+            x = proj + self.conv2(x)
+
+        x = x + self.conv4(self.conv3(x))
+        return x
+
+
 class EncoderBlock(nn.Module):
     def __init__(
         self,
@@ -485,7 +540,7 @@ class InstanSeg_UNet(UNet):
     ):
         super().__init__()
         # Handle positional model_type if passed through UNet constructor
-        if isinstance(in_channels, str) and in_channels.lower() in ("instanseg_unet", "improved_unet", "efficientunetb0", "convnext_unet"):
+        if isinstance(in_channels, str) and in_channels.lower() in ("instanseg_unet", "unet_v3", "unet_v4", "unet_v5", "improved_unet", "efficientunetb0", "convnext_unet"):
             in_channels = out_channels if out_channels is not None else 3
             out_channels = layers if layers is not None else [[2, 2, 1]]
             layers = [256, 128, 64, 32]
@@ -543,6 +598,88 @@ class ImprovedUNet(InstanSeg_UNet):
         dropout=0,
         act="GELU",
         model_type="improved_unet",
+        **kwargs,
+    ):
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            layers=layers,
+            norm=norm,
+            dropout=dropout,
+            act=act,
+            model_type=model_type,
+            **kwargs,
+        )
+
+
+class UNetV3(InstanSeg_UNet):
+    """Baseline InstanSeg U-Net with GELU activations."""
+
+    def __init__(
+        self,
+        in_channels=3,
+        out_channels=[[2, 2, 1]],
+        layers=[256, 128, 64, 32],
+        norm="BATCH",
+        dropout=0,
+        act="GELU",
+        model_type="unet_v3",
+        **kwargs,
+    ):
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            layers=layers,
+            norm=norm,
+            dropout=dropout,
+            act=act,
+            model_type=model_type,
+            **kwargs,
+        )
+
+
+class UNetV4(InstanSeg_UNet):
+    """Baseline InstanSeg U-Net with parallel standard and attention-gated skips."""
+
+    decoder_block = V4DecoderBlock
+
+    def __init__(
+        self,
+        in_channels=3,
+        out_channels=[[2, 2, 1]],
+        layers=[256, 128, 64, 32],
+        norm="BATCH",
+        dropout=0,
+        act="ReLu",
+        model_type="unet_v4",
+        **kwargs,
+    ):
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            layers=layers,
+            norm=norm,
+            dropout=dropout,
+            act=act,
+            model_type=model_type,
+            **kwargs,
+        )
+
+
+class UNetV5(InstanSeg_UNet):
+    """Baseline InstanSeg U-Net using the improved decoder blocks."""
+
+    decoder_block = ImprovedDecoderBlock
+
+    def __init__(
+        self,
+        in_channels=3,
+        out_channels=[[2, 2, 1]],
+        layers=[256, 128, 64, 32],
+        norm="BATCH",
+        dropout=0,
+        act="ReLu",
+        model_type="unet_v5",
         **kwargs,
     ):
         super().__init__(

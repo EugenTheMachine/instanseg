@@ -71,7 +71,7 @@ class UNet(nn.Module):
 
             if model_type is None or not isinstance(model_type, str):
                 raise ValueError(
-                    "model_type must be specified as 'instanseg_unet', 'unet_v3', 'unet_v4', 'unet_v5', 'improved_unet', 'efficientunetb0', or 'convnext_unet'"
+                    "model_type must be specified as 'instanseg_unet', 'unet_v3', 'unet_v4', 'unet_v5', 'unet_v6', 'unet_v7', 'improved_unet', 'efficientunetb0', or 'convnext_unet'"
                 )
 
             mt_lower = model_type.lower().replace("-", "_")
@@ -83,6 +83,10 @@ class UNet(nn.Module):
                 target_cls = UNetV4
             elif mt_lower == "unet_v5":
                 target_cls = UNetV5
+            elif mt_lower == "unet_v6":
+                target_cls = UNetV6
+            elif mt_lower == "unet_v7":
+                target_cls = UNetV7
             elif mt_lower in ("improved_unet", "improved_instanseg_unet", "improvedunet"):
                 target_cls = ImprovedUNet
             elif mt_lower == "efficientunetb0":
@@ -99,7 +103,7 @@ class UNet(nn.Module):
                 target_cls = MobileNetV2_UNet
             else:
                 raise ValueError(
-                    f"Unsupported model_type: '{model_type}'. Expected 'instanseg_unet', 'unet_v3', 'unet_v4', 'unet_v5', 'improved_unet', 'efficientunetb0', 'convnext_unet', 'mednext_unet', 'instanseg_unet_v2', or 'mobilenetv2_unet'."
+                    f"Unsupported model_type: '{model_type}'. Expected 'instanseg_unet', 'unet_v3', 'unet_v4', 'unet_v5', 'unet_v6', 'unet_v7', 'improved_unet', 'efficientunetb0', 'convnext_unet', 'mednext_unet', 'instanseg_unet_v2', or 'mobilenetv2_unet'."
                 )
 
             return super(UNet, target_cls).__new__(target_cls)
@@ -325,8 +329,10 @@ class DecoderBlock(nn.Module):
         norm="BATCH",
         act="ReLU",
         shallow=False,
+        upsample_mode="nearest",
     ):
         super().__init__()
+        self.upsample_mode = upsample_mode
 
         self.conv0 = conv_norm_act(in_channels, out_channels, 1, norm, act)
         if skip_channels and skip_channels > 0:
@@ -342,7 +348,10 @@ class DecoderBlock(nn.Module):
             self.conv3 = nn.Identity()
 
     def forward(self, x, skip=None):
-        x = F.interpolate(x, scale_factor=2, mode="nearest")
+        if self.upsample_mode == "bilinear":
+            x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False)
+        else:
+            x = F.interpolate(x, scale_factor=2, mode="nearest")
         proj = self.conv0(x)
         x = self.conv1(x)
         if skip is not None and self.conv_skip is not None:
@@ -489,11 +498,14 @@ class EncoderBlock(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, layers, out_channels, norm, act, decoder_block=DecoderBlock):
+    def __init__(self, layers, out_channels, norm, act, decoder_block=DecoderBlock, upsample_mode="nearest"):
         super().__init__()
 
         self.decoder = nn.ModuleList(
-            [decoder_block(layers[i], layers[i + 1], layers[i + 1], norm=norm, act=act) for i in range(len(layers) - 1)]
+            [decoder_block(layers[i], layers[i + 1], layers[i + 1], norm=norm, act=act, upsample_mode=upsample_mode)
+             if decoder_block is DecoderBlock
+             else decoder_block(layers[i], layers[i + 1], layers[i + 1], norm=norm, act=act)
+             for i in range(len(layers) - 1)]
         )
 
         self.final_block = nn.ModuleList(
@@ -540,7 +552,7 @@ class InstanSeg_UNet(UNet):
     ):
         super().__init__()
         # Handle positional model_type if passed through UNet constructor
-        if isinstance(in_channels, str) and in_channels.lower() in ("instanseg_unet", "unet_v3", "unet_v4", "unet_v5", "improved_unet", "efficientunetb0", "convnext_unet"):
+        if isinstance(in_channels, str) and in_channels.lower() in ("instanseg_unet", "unet_v3", "unet_v4", "unet_v5", "unet_v6", "unet_v7", "improved_unet", "efficientunetb0", "convnext_unet"):
             in_channels = out_channels if out_channels is not None else 3
             out_channels = layers if layers is not None else [[2, 2, 1]]
             layers = [256, 128, 64, 32]
@@ -692,6 +704,125 @@ class UNetV5(InstanSeg_UNet):
             model_type=model_type,
             **kwargs,
         )
+
+
+class UNetV6(InstanSeg_UNet):
+    """
+    Multi-headed InstanSeg U-Net (unet_v6).
+    Baseline encoder and decoder architecture, split into 3 dedicated decoders:
+      - coords decoder: [dim_coords] (nearest upsampling)
+      - sigma decoder: [n_sigma] (bilinear interpolation upsampling)
+      - seeds decoder: [n_seeds] (nearest upsampling)
+    """
+
+    def __init__(
+        self,
+        in_channels=3,
+        out_channels=[[2], [2], [1]],
+        layers=[256, 128, 64, 32],
+        norm="BATCH",
+        dropout=0,
+        act="ReLu",
+        model_type="unet_v6",
+        **kwargs,
+    ):
+        super(InstanSeg_UNet, self).__init__()
+        # Handle positional model_type if passed through UNet constructor
+        if isinstance(in_channels, str) and in_channels.lower() in (
+            "instanseg_unet", "unet_v3", "unet_v4", "unet_v5", "unet_v6", "unet_v7",
+            "improved_unet", "efficientunetb0", "convnext_unet"
+        ):
+            in_channels = out_channels if out_channels is not None else 3
+            out_channels = layers if layers is not None else [[2], [2], [1]]
+            layers = [256, 128, 64, 32]
+
+        if in_channels == 0 or in_channels is None:
+            in_channels = 3
+        self.in_channels = in_channels
+        self.model_type = model_type
+        self.dropout = dropout
+
+        layers = list(layers)[::-1]
+        self.encoder = nn.ModuleList(
+            [EncoderBlock(in_channels, layers[0], pool=False, norm=norm, act=act)]
+            + [EncoderBlock(layers[i], layers[i + 1], norm=norm, act=act) for i in range(len(layers) - 1)]
+        )
+        layers = layers[::-1]
+
+        # Ensure multiheaded out_channels format: e.g. [[2], [2], [1]]
+        # If passed as [[2, 2, 1]], split into [[2], [2], [1]]
+        if isinstance(out_channels, list) and len(out_channels) == 1 and isinstance(out_channels[0], list) and len(out_channels[0]) == 3:
+            out_channels = [[out_channels[0][0]], [out_channels[0][1]], [out_channels[0][2]]]
+        elif isinstance(out_channels, (list, tuple)) and all(isinstance(x, int) for x in out_channels) and len(out_channels) == 3:
+            out_channels = [[out_channels[0]], [out_channels[1]], [out_channels[2]]]
+        elif isinstance(out_channels, int):
+            out_channels = [[out_channels]]
+
+        # Build decoders: sigma decoder (index 1 if 3 decoders) uses bilinear, others nearest
+        decoders = []
+        for idx, out_channel in enumerate(out_channels):
+            # For 3-head setup (coords, sigma, seeds), idx 1 is sigma
+            mode = "bilinear" if idx == 1 else "nearest"
+            decoders.append(
+                Decoder(layers, out_channel, norm=norm, act=act, decoder_block=DecoderBlock, upsample_mode=mode)
+            )
+        self.decoders = nn.ModuleList(decoders)
+
+
+class UNetV7(InstanSeg_UNet):
+    """
+    Multi-headed InstanSeg U-Net (unet_v7).
+    Same multi-headed structure as unet_v6, but using nearest-neighbour
+    interpolation in all heads (coords, sigma, seeds).
+    """
+
+    def __init__(
+        self,
+        in_channels=3,
+        out_channels=[[2], [2], [1]],
+        layers=[256, 128, 64, 32],
+        norm="BATCH",
+        dropout=0,
+        act="ReLu",
+        model_type="unet_v7",
+        **kwargs,
+    ):
+        super(InstanSeg_UNet, self).__init__()
+        # Handle positional model_type if passed through UNet constructor
+        if isinstance(in_channels, str) and in_channels.lower() in (
+            "instanseg_unet", "unet_v3", "unet_v4", "unet_v5", "unet_v6", "unet_v7",
+            "improved_unet", "efficientunetb0", "convnext_unet"
+        ):
+            in_channels = out_channels if out_channels is not None else 3
+            out_channels = layers if layers is not None else [[2], [2], [1]]
+            layers = [256, 128, 64, 32]
+
+        if in_channels == 0 or in_channels is None:
+            in_channels = 3
+        self.in_channels = in_channels
+        self.model_type = model_type
+        self.dropout = dropout
+
+        layers = list(layers)[::-1]
+        self.encoder = nn.ModuleList(
+            [EncoderBlock(in_channels, layers[0], pool=False, norm=norm, act=act)]
+            + [EncoderBlock(layers[i], layers[i + 1], norm=norm, act=act) for i in range(len(layers) - 1)]
+        )
+        layers = layers[::-1]
+
+        # Ensure multiheaded out_channels format: e.g. [[2], [2], [1]]
+        if isinstance(out_channels, list) and len(out_channels) == 1 and isinstance(out_channels[0], list) and len(out_channels[0]) == 3:
+            out_channels = [[out_channels[0][0]], [out_channels[0][1]], [out_channels[0][2]]]
+        elif isinstance(out_channels, (list, tuple)) and all(isinstance(x, int) for x in out_channels) and len(out_channels) == 3:
+            out_channels = [[out_channels[0]], [out_channels[1]], [out_channels[2]]]
+        elif isinstance(out_channels, int):
+            out_channels = [[out_channels]]
+
+        # Build decoders: all heads use nearest-neighbour upsampling
+        self.decoders = nn.ModuleList([
+            Decoder(layers, out_channel, norm=norm, act=act, decoder_block=DecoderBlock, upsample_mode="nearest")
+            for out_channel in out_channels
+        ])
 
 
 class EfficientEncoder(nn.Module):

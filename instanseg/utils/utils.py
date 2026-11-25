@@ -352,6 +352,7 @@ def export_to_torchscript(model_str: str, show_example: bool = False, output_dir
     super_model = InstanSeg_Torchscript(model, pixel_size=pixel_size,
                                         n_sigma=n_sigma,
                                         params=params,
+                                        embedding_mode=model_dict.get("embedding_mode", "center"),
                                         feature_engineering_function=str(model_dict["feature_engineering"]),
                                         backbone_dim_in=dim_in).to(device)
 

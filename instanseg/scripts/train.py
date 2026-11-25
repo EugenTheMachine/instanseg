@@ -57,6 +57,7 @@ parser.add_argument('-window', '--window_size', default=128, type=int, help = "S
 parser.add_argument('-multihead', '--multihead', default= False, type=lambda x: (str(x).lower() == 'true'), help = "Whether to branch the decoder into multiple heads.")
 parser.add_argument('-dim_coords', '--dim_coords', default=2, type=int, help = "Dimensionality of the coordinate system. Little support for anything but 2")
 parser.add_argument('-dim_seeds', '--dim_seeds', default=1, type=int, help = "Number of seed maps to produce. Little support for anything but 1")
+parser.add_argument('-embedding_mode', '--embedding_mode', default="center", type=str, help="Spatial embedding mode: 'center', 'border', or 'combined'")
 parser.add_argument('-norm', '--norm', default="BATCH", type=str, help = "Norm layer to use: None, INSTANCE, INSTANCE_INVARIANT, BATCH")
 parser.add_argument('-mlp_w', '--mlp_width', default=5, type=int, help = "Width of the MLP hidden dim")
 parser.add_argument('-augmentation_type', '--augmentation_type', default="minimal", type=str, help = "'minimal' or 'heavy' or 'brightfield_only'")
@@ -217,6 +218,7 @@ def instanseg_training(segmentation_dataset: Dict = None, **kwargs):
                         window_size = args.window_size, 
                         dim_coords= args.dim_coords,
                         dim_seeds = args.dim_seeds, 
+                        embedding_mode = args.embedding_mode,
                         feature_engineering_function=args.feature_engineering,
                         bg_weight = args.bg_weight,
                         max_seeds = getattr(args, "max_seeds", 300))  # binary_xloss, lovasz_hinge dice_loss general_dice_loss

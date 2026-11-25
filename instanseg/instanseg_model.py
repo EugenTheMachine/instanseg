@@ -65,7 +65,7 @@ def _load_default_config() -> Dict[str, Any]:
             "freeze_backbone_epochs": 0,
             "pretrained_backbone": True,
             "dropout": 0.0,
-            "embedding_mode": "center-seed",
+            "embedding_mode": "center",
         },
         "optimizer": {
             "type": "AdamW",
@@ -101,6 +101,7 @@ def _flatten_config(config: Dict[str, Any]) -> Dict[str, Any]:
     flat["dim_seeds"] = flat.get("dim_seeds", 1)
     flat["dim_coords"] = flat.get("dim_coords", 2)
     flat["n_sigma"] = flat.get("n_sigma", 2)
+    flat["embedding_mode"] = flat.get("embedding_mode", "center")
     flat["norm"] = flat.get("norm", "BATCH")
     flat["channel_invariant"] = flat.get("channel_invariant", False)
     flat["amp"] = flat.get("amp", False)
@@ -218,6 +219,12 @@ class InstanSegModel:
         if image_modality not in {"auto", "brightfield", "phase-contrast"}:
             raise ValueError("preprocessing.image_modality must be 'auto', 'brightfield', or 'phase-contrast'.")
 
+        embedding_mode = self.config["model"].get("embedding_mode", "center")
+        if embedding_mode not in {"center", "border", "combined"}:
+            raise ValueError(
+                f"model.embedding_mode must be 'center', 'border', or 'combined', got {embedding_mode!r}."
+            )
+
     def _init_model_from_checkpoint(self, ckp_path: Path):
         """Initializes model architecture and loads weights from checkpoint."""
         flat_cfg = _flatten_config(self.config)
@@ -234,6 +241,7 @@ class InstanSegModel:
             window_size=flat_cfg.get("window_size", 128),
             dim_coords=flat_cfg.get("dim_coords", 2),
             dim_seeds=flat_cfg.get("dim_seeds", 1),
+            embedding_mode=flat_cfg.get("embedding_mode", "center"),
             bg_weight=None,
         )
         self.model = instanseg_loss_instance.initialize_pixel_classifier(
@@ -322,6 +330,7 @@ class InstanSegModel:
             window_size=flat_cfg.get("window_size", 128),
             dim_coords=flat_cfg.get("dim_coords", 2),
             dim_seeds=flat_cfg.get("dim_seeds", 1),
+            embedding_mode=flat_cfg.get("embedding_mode", "center"),
             bg_weight=None,
         )
 
@@ -701,6 +710,7 @@ class InstanSegModel:
             window_size=flat_cfg.get("window_size", 128),
             dim_coords=flat_cfg.get("dim_coords", 2),
             dim_seeds=flat_cfg.get("dim_seeds", 1),
+            embedding_mode=flat_cfg.get("embedding_mode", "center"),
             bg_weight=None,
         )
 

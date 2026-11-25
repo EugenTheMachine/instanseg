@@ -97,6 +97,10 @@ def read_model_args_from_csv(path=r"../results/", folder=""):
         build_model_dictionary["dim_seeds"] = int(build_model_dictionary["dim_seeds"])
     else:
         build_model_dictionary["dim_seeds"] = 1
+    if "embedding_mode" in build_model_dictionary.keys() and str(build_model_dictionary["embedding_mode"]).lower() != "nan":
+        build_model_dictionary["embedding_mode"] = str(build_model_dictionary["embedding_mode"])
+    else:
+        build_model_dictionary["embedding_mode"] = "center"
 
     return build_model_dictionary
 
@@ -125,6 +129,13 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
     if "dropprob" not in build_model_dictionary.keys():
         build_model_dictionary["dropprob"] = 0.0
 
+    embedding_mode = build_model_dictionary.get("embedding_mode", "center") or "center"
+    if embedding_mode not in {"center", "border", "combined"}:
+        raise ValueError(
+            f"Unknown embedding_mode: {embedding_mode!r}. Expected one of 'center', 'border', 'combined'."
+        )
+    spatial_channels = build_model_dictionary["dim_coords"] * (2 if embedding_mode == "combined" else 1)
+
     model_str = build_model_dictionary["model_str"].lower().replace("-", "_")
     if model_str in ["instanseg_unet", "unet_v3", "unet_v4", "unet_v5", "unet_v6", "unet_v7", "improved_unet", "improvedunet", "improved_instanseg_unet", "efficientunetb0", "convnext_unet", "convnext_tiny", "convnext", "mednext_unet", "mednext", "mednext_instanseg", "mednext_instanseg_deep", "instanseg_unet_v2", "mobilenetv2_unet", "mobilenet_unet", "mobilenetv2", "unetv2"]:
         from instanseg.utils.models.InstanSeg_UNet import UNet
@@ -135,9 +146,9 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
 
         n_seeds = build_model_dictionary["dim_seeds"]
         if not multihead:
-            out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"], n_seeds]]
+            out_channels = [[spatial_channels, build_model_dictionary["n_sigma"], n_seeds]]
         else:
-            out_channels = [[build_model_dictionary["dim_coords"]], [build_model_dictionary["n_sigma"]], [n_seeds]]
+            out_channels = [[spatial_channels], [build_model_dictionary["n_sigma"]], [n_seeds]]
 
         # ConvNeXt backbone has fixed feature dims — the "layers" param is irrelevant
         if model_str in ("convnext_unet", "convnext_tiny", "convnext"):
@@ -207,7 +218,7 @@ def build_model_from_dict(build_model_dictionary, random_seed = None):
     elif build_model_dictionary["model_str"].lower() == "sam_unet":
         from instanseg.utils.models.CellposeSam import SAM_UNet
         print("Generating SAM_UNet")
-        out_channels = [[build_model_dictionary["dim_coords"], build_model_dictionary["n_sigma"],build_model_dictionary["dim_seeds"]]]
+        out_channels = [[spatial_channels, build_model_dictionary["n_sigma"], build_model_dictionary["dim_seeds"]]]
         model = SAM_UNet(in_channels=dim_in, out_channels=out_channels,
                          layers=np.array(build_model_dictionary["layers"])[::-1],
                          norm=build_model_dictionary["norm"], dropout=build_model_dictionary["dropprob"])
@@ -275,7 +286,7 @@ def load_model_weights(model, device, folder, path=r"../models/", dict = None):
     if has_pixel_classifier_state_dict(model_dict['model_state_dict']) and not has_pixel_classifier_model(model):
         from instanseg.utils.loss.instanseg_loss import InstanSeg
 
-        method = InstanSeg(n_sigma=int(dict["n_sigma"]), feature_engineering_function= dict["feature_engineering"],dim_coords = dict["dim_coords"],dim_seeds = dict["dim_seeds"],device =device)
+        method = InstanSeg(n_sigma=int(dict["n_sigma"]), feature_engineering_function= dict["feature_engineering"],dim_coords = dict["dim_coords"],dim_seeds = dict["dim_seeds"],embedding_mode=dict.get("embedding_mode", "center"),device =device)
         model = method.initialize_pixel_classifier(model, MLP_width=int(dict["mlp_width"]))
     
 

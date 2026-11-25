@@ -189,6 +189,7 @@ if __name__ == "__main__":
                            window_size=parser_args.window_size, 
                            dim_coords=model_dict["dim_coords"],
                            dim_seeds= model_dict["dim_seeds"],
+                           embedding_mode=model_dict.get("embedding_mode", "center"),
                            feature_engineering_function=model_dict["feature_engineering"])
 
         parser_args.pixel_size = model_dict["pixel_size"]

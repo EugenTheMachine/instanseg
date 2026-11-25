@@ -27,7 +27,7 @@ model:
   # First use downloads torchvision's ImageNet weights if they are not cached.
   pretrained_backbone: true
   dropout: 0.0
-  embedding_mode: "center-seed"
+  embedding_mode: "center"
 
 optimizer:
   type: "AdamW"

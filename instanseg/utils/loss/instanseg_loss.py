@@ -17,6 +17,76 @@ from instanseg.utils.utils import timer
 
 integer_dtype = torch.int64
 
+VALID_EMBEDDING_MODES = ("center", "border", "combined")
+
+
+def validate_embedding_mode(embedding_mode: str) -> str:
+    """Validate and normalize spatial embedding_mode."""
+    if embedding_mode is None:
+        return "center"
+    if embedding_mode not in VALID_EMBEDDING_MODES:
+        raise ValueError(
+            f"Invalid embedding_mode: {embedding_mode!r}. "
+            f"Expected one of {VALID_EMBEDDING_MODES}."
+        )
+    return embedding_mode
+
+
+def compute_nearest_border_targets(
+    instance_map: torch.Tensor,
+    dim_coords: int = 2,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Compute nearest instance-boundary coordinate targets in xxyy grid space."""
+    from scipy.ndimage import binary_erosion, distance_transform_edt
+
+    if instance_map.ndim == 3:
+        instance_map = instance_map.squeeze(0)
+
+    height, width = instance_map.shape
+    inst_np = instance_map.detach().cpu().numpy()
+    fg_mask_np = inst_np > 0
+
+    target_y = np.zeros((height, width), dtype=np.int64)
+    target_x = np.zeros((height, width), dtype=np.int64)
+
+    if fg_mask_np.any():
+        for inst_id in np.unique(inst_np):
+            if inst_id <= 0:
+                continue
+            inst_mask = inst_np == inst_id
+            ys, xs = np.where(inst_mask)
+            y0, y1 = int(ys.min()), int(ys.max()) + 1
+            x0, x1 = int(xs.min()), int(xs.max()) + 1
+
+            sub_mask = inst_mask[y0:y1, x0:x1]
+            boundary = sub_mask & ~binary_erosion(sub_mask, border_value=0)
+            if not boundary.any():
+                boundary = sub_mask
+
+            indices = distance_transform_edt(~boundary, return_distances=False, return_indices=True)
+            target_y[y0:y1, x0:x1][sub_mask] = indices[0][sub_mask] + y0
+            target_x[y0:y1, x0:x1][sub_mask] = indices[1][sub_mask] + x0
+
+    xx = torch.linspace(0, width * 64 / 256, width, device=instance_map.device)
+    yy = torch.linspace(0, height * 64 / 256, height, device=instance_map.device)
+
+    ty_idx = torch.from_numpy(target_y).to(device=instance_map.device, dtype=torch.long)
+    tx_idx = torch.from_numpy(target_x).to(device=instance_map.device, dtype=torch.long)
+
+    tx = xx[tx_idx]
+    ty = yy[ty_idx]
+
+    if dim_coords == 2:
+        target_border = torch.stack((tx, ty), dim=0)
+    elif dim_coords >= 3:
+        zz = torch.zeros((dim_coords - 2, height, width), device=instance_map.device, dtype=tx.dtype)
+        target_border = torch.cat((tx.unsqueeze(0), ty.unsqueeze(0), zz), dim=0)
+    else:
+        target_border = torch.zeros((dim_coords, height, width), device=instance_map.device, dtype=tx.dtype)
+
+    fg_mask = torch.from_numpy(fg_mask_np).to(device=instance_map.device, dtype=torch.bool)
+    return target_border, fg_mask
+
 
 def convert(prob_input: torch.Tensor, coords_input: torch.Tensor, size: Tuple[int, int],
             mask_threshold: float = 0.5) -> torch.Tensor:
@@ -435,17 +505,21 @@ class InstanSeg(nn.Module):
                  bg_weight = None,
                  dim_coords = 2,
                  dim_seeds = 1,
-                 max_seeds = 300,):
+                 max_seeds = 300,
+                 embedding_mode: str = "center"):
         
         super().__init__()
         self.n_sigma = n_sigma
         self.instance_weight = instance_weight
         self.device = device
         self.dim_coords = dim_coords
-
         self.dim_seeds = dim_seeds
+        self.embedding_mode = validate_embedding_mode(embedding_mode)
+        self.dim_center = self.dim_coords if self.embedding_mode in {"center", "combined"} else 0
+        self.dim_border = self.dim_coords if self.embedding_mode in {"border", "combined"} else 0
+        self.dim_spatial = self.dim_center + self.dim_border
 
-        self.dim_out = self.dim_coords + self.n_sigma + self.dim_seeds
+        self.dim_out = self.dim_spatial + self.n_sigma + self.dim_seeds
         self.parameters_have_been_updated = False
 
         self.window_size = window_size
@@ -565,11 +639,33 @@ class InstanSeg(nn.Module):
             return model
         else:
             if MLP_input_dim is None:
-                MLP_input_dim = self.feature_engineering_width + self.n_sigma - 2 + self.dim_coords
+                MLP_input_dim = self.feature_engineering_width + self.n_sigma - 2 + self.dim_spatial
             model.pixel_classifier = ProbabilityNet(MLP_input_dim, width=MLP_width)
             self.pixel_classifier = model.pixel_classifier.to(self.device)
 
             return model
+
+    def _split_prediction(self, prediction: torch.Tensor, xxyy: torch.Tensor):
+        """Split raw model output into mode-aware spatial embeddings, sigma, and seed map."""
+        center_emb = None
+        border_emb = None
+        if self.dim_center > 0:
+            center_emb = (torch.sigmoid(prediction[..., :self.dim_center, :, :]) - 0.5) * 8 + xxyy
+        if self.dim_border > 0:
+            border_emb = (
+                torch.sigmoid(prediction[..., self.dim_center:self.dim_spatial, :, :]) - 0.5
+            ) * 8 + xxyy
+        sigma = prediction[..., self.dim_spatial:self.dim_spatial + self.n_sigma, :, :]
+        seed_map = prediction[..., -self.dim_seeds:, :, :]
+        return center_emb, border_emb, sigma, seed_map
+
+    def _get_spatial_emb(self, center_emb, border_emb):
+        """Assemble the spatial embedding tensor passed to feature engineering."""
+        if self.embedding_mode == "center":
+            return center_emb
+        if self.embedding_mode == "border":
+            return border_emb
+        return torch.cat((center_emb, border_emb), dim=-3)
         
 
     def forward(self, prediction: torch.Tensor, instances: torch.Tensor, w_inst: float = 1.5, w_seed: float = 1.0):
@@ -590,15 +686,15 @@ class InstanSeg(nn.Module):
 
             prediction_b = prediction
 
-            spatial_emb_batch = (torch.sigmoid((prediction_b[:, 0: self.dim_coords]))-0.5) * 8 + xxyy
-
-            sigma_batch = prediction_b[:, self.dim_coords: self.dim_coords + self.n_sigma]  # n_sigma x h x w
-            seed_map_batch = prediction_b[:, - self.dim_seeds:]  # 1 x h x w
-
+            center_emb_batch, border_emb_batch, sigma_batch, seed_map_batch = self._split_prediction(
+                prediction_b, xxyy
+            )
+            spatial_emb_batch = self._get_spatial_emb(center_emb_batch, border_emb_batch)
 
             for b in range(0, batch_size):
 
                 spatial_emb = spatial_emb_batch[b]
+                border_emb = border_emb_batch[b] if border_emb_batch is not None else None
                 sigma = sigma_batch[b]
                 seed_map = seed_map_batch[b]
 
@@ -625,7 +721,20 @@ class InstanSeg(nn.Module):
                     loss += w_seed * seed_loss
                     continue
 
+                if border_emb is not None:
+                    target_border, fg_mask = compute_nearest_border_targets(
+                        instance, dim_coords=self.dim_coords
+                    )
+                    if mask is not None:
+                        fg_mask = fg_mask & mask.squeeze(0)
+                    if fg_mask.any():
+                        border_loss = F.l1_loss(border_emb[:, fg_mask], target_border[:, fg_mask])
+                    else:
+                        border_loss = border_emb.sum() * 0.0
+                    instance_loss = instance_loss + border_loss
+
                 if instance.min() > 0:
+                    loss += w_inst * instance_loss + w_seed * seed_loss
                     continue
 
                 instance_ids = instance.unique()
@@ -661,7 +770,7 @@ class InstanSeg(nn.Module):
 
 
                     if len(centroids) == 0:
-                        loss += w_seed * seed_loss
+                        loss += w_inst * instance_loss + w_seed * seed_loss
                         continue
 
                     window_size = min(self.window_size, height, width)
@@ -750,16 +859,15 @@ class InstanSeg(nn.Module):
 
                 xxyy = generate_coordinate_map(mode = "linear", spatial_dim = self.dim_coords, height = height, width = width, device = device)
 
-                fields = (torch.sigmoid(prediction_i[0:self.dim_coords])-0.5) * 8
-
-                sigma = prediction_i[self.dim_coords:self.dim_coords + self.n_sigma]
+                center_emb, border_emb, sigma, seed_map = self._split_prediction(prediction_i, xxyy)
+                fields = self._get_spatial_emb(center_emb, border_emb)
 
                 if self.dim_seeds == 1:
-                    mask_map = ((prediction_i[-1]) / 15) + 0.5
+                    mask_map = ((seed_map[-1]) / 15) + 0.5
                     binary_map = mask_map
                 else:
-                    binary_map = torch.sigmoid(prediction_i[-1])
-                    mask_map = (prediction_i[-2] / 15).clone() + 0.5
+                    binary_map = torch.sigmoid(seed_map[-1])
+                    mask_map = (seed_map[-2] / 15).clone() + 0.5
 
                     mask_map[~(binary_map > fg_threshold)] = 0  # Set seed_map to 0 where binary_map is False
 
@@ -773,9 +881,6 @@ class InstanSeg(nn.Module):
                     local_centroids_idx = torch_peak_local_max(mask_map, neighbourhood_size=int(peak_distance), minimum_value=seed_threshold)
                 else:
                     local_centroids_idx = precomputed_seeds
-
-            
-                fields = fields + xxyy
 
                 if max_seeds is None:
                     max_seeds = getattr(self, "max_seeds", 300)
@@ -960,6 +1065,7 @@ class InstanSeg_Torchscript(nn.Module):
                  dim_seeds: int = 1,
                  backbone_dim_in: int = 3,  
                  feature_engineering_function:str  = "0",
+                 embedding_mode: str = "center",
                  params = None):
         super(InstanSeg_Torchscript, self).__init__()
 
@@ -982,6 +1088,10 @@ class InstanSeg_Torchscript(nn.Module):
         self.dim_coords = dim_coords
         self.dim_seeds = dim_seeds
         self.n_sigma = n_sigma
+        self.embedding_mode = validate_embedding_mode(embedding_mode)
+        self.dim_center = self.dim_coords if self.embedding_mode in {"center", "combined"} else 0
+        self.dim_border = self.dim_coords if self.embedding_mode in {"border", "combined"} else 0
+        self.dim_spatial = self.dim_center + self.dim_border
         self.feature_engineering, self.feature_engineering_width = feature_engineering_generator(feature_engineering_function)
         self.params = params or {}
         self.index_dtype = torch.long #torch.int
@@ -1072,13 +1182,13 @@ class InstanSeg_Torchscript(nn.Module):
                     xxyy = generate_coordinate_map(mode = "linear", spatial_dim = self.dim_coords, height = height, width = width, device = x.device)
 
 
-                    fields = (torch.sigmoid(x[0:self.dim_coords])-0.5) * 8
+                    fields = (torch.sigmoid(x[0:self.dim_spatial])-0.5) * 8
 
 
-                    sigma = x[self.dim_coords:self.dim_coords + self.n_sigma]
+                    sigma = x[self.dim_spatial:self.dim_spatial + self.n_sigma]
 
-                    #mask_map = torch.sigmoid(x[self.dim_coords + self.n_sigma]) #legacy
-                    mask_map = ((x[self.dim_coords + self.n_sigma]) / 15) + 0.5 # inverse transform applied to edt during training.
+                    #mask_map = torch.sigmoid(x[self.dim_spatial + self.n_sigma]) #legacy
+                    mask_map = ((x[self.dim_spatial + self.n_sigma]) / 15) + 0.5 # inverse transform applied to edt during training.
 
                     if self.dim_seeds == 1:
                         mask_map = ((x[-1]) / 15) + 0.5
@@ -1096,7 +1206,11 @@ class InstanSeg_Torchscript(nn.Module):
                     else:
                         centroids_idx = precomputed_seeds.to(mask_map.device).long()
 
-                    fields = fields + xxyy
+                    if self.embedding_mode == "combined":
+                        xxyy_full = torch.cat((xxyy, xxyy), dim=0)
+                    else:
+                        xxyy_full = xxyy
+                    fields = fields + xxyy_full
 
                     fields_at_centroids = fields[:, centroids_idx[:, 0], centroids_idx[:, 1]]
 
